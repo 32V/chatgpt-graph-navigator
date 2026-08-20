@@ -1,4 +1,4 @@
-CI diagnostic for 73013e2267728523deedcd1cea5d787a628b00e4
+CI diagnostic for 442fd4d63ef38d152f5e3da2d3218cd0240a415b
 
 == npm ci ==
 exit_code=0
@@ -37,7 +37,7 @@ exit_code=0
 Stable answer reveal layout checks passed.
 
 == release build ==
-exit_code=1
+exit_code=0
 
 > chatgpt-graph-extension@0.6.0 release
 > node scripts/release.js
@@ -51,62 +51,73 @@ exit_code=1
 > node build.js --release
 
 
-  dist/graph-ux.css  1.6kb
-
-⚡ Done in 5ms
-
   dist/docked-panel-theme.css  2.2kb
 
-⚡ Done in 14ms
+⚡ Done in 10ms
 
   dist/chatgpt-theme.css  12.5kb
 
-⚡ Done in 11ms
+⚡ Done in 8ms
 
   dist/edit-pagination-compat.js  2.8kb
 
-⚡ Done in 28ms
+⚡ Done in 15ms
+
+  dist/graph-ux.css  1.6kb
+
+⚡ Done in 10ms
 
   dist/sidepanel.css  34.6kb
 
-⚡ Done in 15ms
+⚡ Done in 12ms
 
   dist/setup.js  2.8kb
 
-⚡ Done in 22ms
-
-  dist/popup.js  14.4kb
-
-⚡ Done in 29ms
+⚡ Done in 21ms
 
   dist/docked-panel.js  11.3kb
 
-⚡ Done in 44ms
+⚡ Done in 34ms
 
   dist/background.js  13.9kb
 
-⚡ Done in 47ms
-✘ [ERROR] No matching export in "src/shared/constants.js" for import "DOM_SELECTORS"
+⚡ Done in 32ms
 
-    src/content/collapse/collapse-manager.js:8:2:
-      8 │   DOM_SELECTORS
-        ╵   ~~~~~~~~~~~~~
+  dist/popup.js  14.4kb
 
-1 error
-× Build failed: Error: Build failed with 1 error:
-src/content/collapse/collapse-manager.js:8:2: ERROR: No matching export in "src/shared/constants.js" for import "DOM_SELECTORS"
-    at failureErrorWithLog (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:1651:15)
-    at /home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:1059:25
-    at runOnEndCallbacks (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:1486:45)
-    at buildResponseToResult (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:1057:7)
-    at /home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:1086:16
-    at responseCallbacks.<computed> (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:704:9)
-    at handleIncomingPacket (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:764:9)
-    at Socket.readFromStdout (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:680:7)
-    at Socket.emit (node:events:524:28)
-    at addChunk (node:internal/streams/readable:561:12) {
-  errors: [Getter/Setter],
-  warnings: [Getter/Setter]
-}
-× Build failed
+⚡ Done in 31ms
+
+  dist/content.js  43.2kb
+
+⚡ Done in 49ms
+
+  dist/sidepanel.js  448.5kb
+
+⚡ Done in 177ms
+√ Release build completed! (debug logs removed, minified)
+
+2. Preparing release directory...
+3. Copying extension files...
+   ✓ manifest.json
+   ✓ dist
+   ✓ src/popup/index.html
+   ✓ src/sidepanel/index.html
+   ✓ src/setup/index.html
+   ⊘ Excluded: icon1024.png
+   ✓ assets
+   ✓ _locales
+4. Copying Chrome Web Store screenshots...
+   ✓ float_main.png
+   ✓ main_feature.png
+
+5. Creating ZIP archive...
+   ✓ chatgpt-graph-extension-v0.6.0.zip (245.1 KB)
+
+✅ Release complete!
+   📁 Extension: release/
+   📦 Archive: chatgpt-graph-extension-v0.6.0.zip
+   🖼️  Screenshots: release-screenshots/
+
+   Upload chatgpt-graph-extension-v0.6.0.zip to the Chrome Web Store when publishing.
+
 
