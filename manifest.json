@@ -49,6 +49,9 @@
         "https://chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
+      "css": [
+        "dist/docked-panel-theme.css"
+      ],
       "js": [
         "dist/docked-panel.js",
         "dist/content.js"

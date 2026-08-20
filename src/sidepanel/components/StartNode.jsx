@@ -1,33 +1,22 @@
-/**
- * 起始节点组件
- * 用于多根节点时显示的虚拟起始节点
- */
 import React, { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
-function StartNode({ data }) {
-  const { colors } = data;
-
+function StartIcon() {
   return (
-    <div
-      className="start-node"
-      style={{
-        backgroundColor: colors?.bg || '#f1f5f9',
-        borderColor: colors?.border || '#94a3b8'
-      }}
-    >
-      <span className="start-node-icon">💬</span>
-      <span className="start-node-text">Start</span>
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="5" cy="5" r="1.4" />
+      <circle cx="15" cy="15" r="1.4" />
+      <path d="M5 6.4v3.2A3.4 3.4 0 0 0 8.4 13H15" />
+    </svg>
+  );
+}
 
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        style={{
-          background: colors?.border || '#94a3b8',
-          width: 8,
-          height: 8
-        }}
-      />
+function StartNode() {
+  return (
+    <div className="start-node">
+      <span className="start-node-icon"><StartIcon /></span>
+      <span className="start-node-text">Start</span>
+      <Handle type="source" position={Position.Bottom} className="qa-node-handle" />
     </div>
   );
 }

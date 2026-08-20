@@ -44,6 +44,7 @@ jobs:
           test -f release/manifest.json
           test -f release/dist/edit-pagination-compat.js
           test -f release/dist/docked-panel.js
+          test -f release/dist/docked-panel-theme.css
           test -f release/dist/content.js
           test -f release/dist/background.js
           test -f release/dist/sidepanel.js

@@ -63,6 +63,11 @@ const builds = [
   },
   {
     ...commonOptions,
+    entryPoints: ['src/content/ui/docked-panel-theme.css'],
+    outfile: 'dist/docked-panel-theme.css'
+  },
+  {
+    ...commonOptions,
     entryPoints: ['src/content/index.js'],
     outfile: 'dist/content.js'
   },

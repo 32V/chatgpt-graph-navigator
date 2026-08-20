@@ -1,152 +1,161 @@
-/**
- * QA 节点组件
- * 显示问题（Q）或回答（A）节点
- */
-import React, { memo, useState, useCallback } from 'react';
+import React, { memo, useCallback, useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
-/**
- * 截断文本
- */
+const PREVIEW_LIMIT = 72;
+const EXPANDED_LIMIT = 300;
+
 function truncate(text, maxLength) {
   if (!text) return '';
   const cleaned = text.replace(/\s+/g, ' ').trim();
   if (cleaned.length <= maxLength) return cleaned;
-  return cleaned.substring(0, maxLength) + '…';
+  return `${cleaned.slice(0, maxLength)}…`;
 }
 
-/**
- * QA 节点组件
- */
-function QANode({ id, data, selected }) {
-  const [isHovered, setIsHovered] = useState(false);
+function UserIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M10 10.1a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Zm-5.2 5.7c.6-2.5 2.5-4 5.2-4s4.6 1.5 5.2 4" />
+    </svg>
+  );
+}
+
+function AssistantIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M10 2.6c.45 2.85 1.95 4.35 4.8 4.8-2.85.45-4.35 1.95-4.8 4.8-.45-2.85-1.95-4.35-4.8-4.8 2.85-.45 4.35-1.95 4.8-4.8Z" />
+      <path d="M15.2 12.1c.22 1.45 1 2.23 2.45 2.45-1.45.22-2.23 1-2.45 2.45-.22-1.45-1-2.23-2.45-2.45 1.45-.22 2.23-1 2.45-2.45Z" />
+    </svg>
+  );
+}
+
+function BranchIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M6 4v6.2c0 1.3 1.05 2.35 2.35 2.35H14" />
+      <path d="M10 7.2h1.65A2.35 2.35 0 0 1 14 9.55V16" />
+      <circle cx="6" cy="4" r="1.35" />
+      <circle cx="14" cy="16" r="1.35" />
+      <circle cx="10" cy="7.2" r="1.35" />
+    </svg>
+  );
+}
+
+function PlusMinusIcon({ expanded }) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M5.5 10h9" />
+      {!expanded && <path d="M10 5.5v9" />}
+    </svg>
+  );
+}
+
+function ExpandIcon({ expanded }) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d={expanded ? 'm6.5 11.5 3.5-3 3.5 3' : 'm6.5 8.5 3.5 3 3.5-3'} />
+    </svg>
+  );
+}
+
+function QANode({ data, selected }) {
   const [isContentExpanded, setIsContentExpanded] = useState(false);
 
   const {
-    nodeType,      // 'question' | 'answer'
+    nodeType,
     nodeId,
     content,
     preview,
-    createTime,
-    isSelected,    // 是否在选中路径上
+    isSelected,
     childCount,
-    colors,
-    messageId,
-    // 折叠相关（只有 Q 节点有）
-    collapsedAnswer,
     canExpand,
     isExpanded,
     onExpandAnswer
   } = data;
 
   const isQuestion = nodeType === 'question';
-  const icon = isQuestion ? '👤' : '🤖';
-  const label = isQuestion ? 'Q' : 'A';
+  const displayText = isContentExpanded
+    ? truncate(content, EXPANDED_LIMIT)
+    : truncate(preview || content, PREVIEW_LIMIT);
+  const normalizedContent = (content || '').replace(/\s+/g, ' ').trim();
+  const hasMore = normalizedContent.length > PREVIEW_LIMIT;
 
-  // 根据状态决定样式
-  const bgColor = colors.bg;
-  const borderColor = selected ? '#1d4ed8' : colors.border;
-  const borderWidth = selected ? 3 : (isSelected ? 2 : 1);
-
-  // 显示的文本
-  const displayText = isContentExpanded ? truncate(content, 300) : truncate(preview, 60);
-  const hasMore = content && content.length > 60;
-
-  // 阻止按钮事件冒泡到节点（防止选中节点触发导航）
-  const stopEvent = useCallback((e) => {
-    e.stopPropagation();
+  const stopEvent = useCallback((event) => {
+    event.stopPropagation();
   }, []);
 
-  const toggleContentExpand = useCallback((e) => {
-    e.stopPropagation();
-    setIsContentExpanded(prev => !prev);
+  const toggleContentExpand = useCallback((event) => {
+    event.stopPropagation();
+    setIsContentExpanded(value => !value);
   }, []);
 
-  const toggleAnswerExpand = useCallback((e) => {
-    e.stopPropagation();
-    if (onExpandAnswer) {
-      onExpandAnswer(nodeId);
-    }
+  const toggleAnswerExpand = useCallback((event) => {
+    event.stopPropagation();
+    onExpandAnswer?.(nodeId);
   }, [onExpandAnswer, nodeId]);
 
   return (
-    <div
-      className={`qa-node ${nodeType} ${isSelected ? 'on-path' : ''} ${selected ? 'selected' : ''} ${isHovered ? 'hovered' : ''}`}
-      style={{
-        backgroundColor: bgColor,
-        borderColor: borderColor,
-        borderWidth: `${borderWidth}px`,
-        borderStyle: 'solid'
-      }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+    <article
+      className={`qa-node ${nodeType} ${isSelected ? 'on-path' : ''} ${selected ? 'selected' : ''}`}
+      data-node-role={nodeType}
+      aria-current={selected ? 'true' : undefined}
     >
-      {/* 顶部连接点 */}
-      <Handle
-        type="target"
-        position={Position.Top}
-        style={{
-          background: colors.border,
-          width: 8,
-          height: 8
-        }}
-      />
+      <Handle type="target" position={Position.Top} className="qa-node-handle" />
 
-      {/* 节点头部 */}
       <div className="qa-node-header">
-        <span className="qa-node-icon">{icon}</span>
-        <span className="qa-node-label">{label}</span>
-        {childCount > 1 && (
-          <span className="qa-node-branch-count" title={`${childCount} branches`}>
-            🌿 {childCount}
+        <div className="qa-node-role">
+          <span className="qa-node-role-icon">
+            {isQuestion ? <UserIcon /> : <AssistantIcon />}
           </span>
-        )}
-        {/* 展开/折叠回答按钮（只在有折叠回答时显示） */}
-        {canExpand && (
-          <button
-            className={`qa-node-expand-answer-btn ${isExpanded ? 'expanded' : ''}`}
-            onClick={toggleAnswerExpand}
-            onMouseDown={stopEvent}
-            title={isExpanded ? 'Hide answer' : 'Show answer'}
-          >
-            {isExpanded ? '−' : '+'}
-          </button>
-        )}
-        {hasMore && (
-          <button
-            className="qa-node-expand-btn"
-            onClick={toggleContentExpand}
-            onMouseDown={stopEvent}
-            title={isContentExpanded ? 'Show less' : 'Show more'}
-          >
-            {isContentExpanded ? '−' : '⋯'}
-          </button>
-        )}
+          <span className="qa-node-label">{isQuestion ? 'You' : 'ChatGPT'}</span>
+        </div>
+
+        <div className="qa-node-actions">
+          {childCount > 1 && (
+            <span className="qa-node-branch-count" title={`${childCount} branches`}>
+              <BranchIcon />
+              <span>{childCount}</span>
+            </span>
+          )}
+
+          {canExpand && (
+            <button
+              className="qa-node-icon-btn qa-node-expand-answer-btn"
+              onClick={toggleAnswerExpand}
+              onMouseDown={stopEvent}
+              title={isExpanded ? 'Hide response node' : 'Show response node'}
+              aria-label={isExpanded ? 'Hide response node' : 'Show response node'}
+              aria-pressed={isExpanded}
+              type="button"
+            >
+              <PlusMinusIcon expanded={isExpanded} />
+            </button>
+          )}
+
+          {hasMore && (
+            <button
+              className="qa-node-icon-btn qa-node-expand-btn"
+              onClick={toggleContentExpand}
+              onMouseDown={stopEvent}
+              title={isContentExpanded ? 'Show less' : 'Show full message'}
+              aria-label={isContentExpanded ? 'Show less' : 'Show full message'}
+              aria-pressed={isContentExpanded}
+              type="button"
+            >
+              <ExpandIcon expanded={isContentExpanded} />
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Q 节点内容 */}
       <div className="qa-node-content">
-        <p className="qa-node-text" title={content}>
-          {displayText || <em className="qa-node-empty">(empty)</em>}
+        <p className={`qa-node-text ${isContentExpanded ? 'expanded' : ''}`} title={content}>
+          {displayText || <em className="qa-node-empty">Empty message</em>}
         </p>
       </div>
 
-      {/* 选中路径指示器 */}
-      {isSelected && (
-        <div className="qa-node-path-indicator" />
-      )}
-
-      {/* 底部连接点 */}
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        style={{
-          background: colors.border,
-          width: 8,
-          height: 8
-        }}
-      />
-    </div>
+      <div className="qa-node-path-indicator" aria-hidden="true" />
+      <Handle type="source" position={Position.Bottom} className="qa-node-handle" />
+    </article>
   );
 }
 
