@@ -34,6 +34,9 @@ jobs:
       - name: Test edit-pagination compatibility
         run: node scripts/test-edit-pagination-compat.mjs
 
+      - name: Test stable graph layout
+        run: node scripts/test-qa-tree-layout.mjs
+
       - name: Build production extension
         run: npm run release
 
@@ -50,6 +53,7 @@ jobs:
           test -f release/dist/sidepanel.js
           test -f release/dist/sidepanel.css
           test -f release/dist/chatgpt-theme.css
+          test -f release/dist/graph-ux.css
           test -f release/src/popup/index.html
           test -f release/src/sidepanel/index.html
           node -e "JSON.parse(require('fs').readFileSync('release/manifest.json', 'utf8')); console.log('manifest.json is valid JSON')"
