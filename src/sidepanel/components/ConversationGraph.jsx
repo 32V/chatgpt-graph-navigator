@@ -1,68 +1,51 @@
-/**
- * 对话图谱组件
- * 使用 React Flow + QA 树实现可视化
- */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ReactFlow,
   Controls,
   MiniMap,
-  Background,
   useNodesState,
   useEdgesState,
   useReactFlow,
   ReactFlowProvider
 } from '@xyflow/react';
-// 注意：不要在这里 import CSS！
-// React Flow 的 CSS 在 src/sidepanel/styles/index.css 中通过 @import 引入
 
 import QANode from './QANode';
 import StartNode from './StartNode';
-import { buildAndLayoutQATree } from '../utils/qaTreeLayout';
+import {
+  buildAndLayoutQATree,
+  GRAPH_NODE_WIDTH,
+  GRAPH_NODE_HEIGHT,
+  INLINE_ANSWER_WIDTH,
+  INLINE_ANSWER_HEIGHT
+} from '../utils/qaTreeLayout';
 
-// 自定义节点类型
 const nodeTypes = {
   qaNode: QANode,
   startNode: StartNode
 };
 
-// 边的默认样式
 const defaultEdgeOptions = {
   type: 'smoothstep',
   animated: false,
-  style: {
-    strokeWidth: 1.5
-  }
+  style: { strokeWidth: 1.5 }
 };
 
-// Sidepanel 右侧栏 vs 悬浮窗（iframe embedded）
 const IS_EMBEDDED = new URLSearchParams(window.location.search).get('embedded') === '1';
-
 const MINIMAP_HANDLE_HEIGHT = 18;
 const MINIMAP_POS_KEY = 'cg:minimap:pos';
 const MINIMAP_WIDTH = 160;
 const MINIMAP_HEIGHT = 120;
-const MINIMAP_MARGIN = 10; // 小地图距离容器边缘的最小距离
+const MINIMAP_MARGIN = 10;
 
-/**
- * 将小地图 offset 限制在容器可视范围内
- * 小地图默认位置是 bottom-left，offset 是相对于这个基准的偏移
- */
 function clampMiniMapOffset(offset, containerWidth, containerHeight) {
-  // 有效的 X 范围：0 到 (容器宽度 - 小地图宽度 - 左右边距)
   const maxX = Math.max(0, containerWidth - MINIMAP_WIDTH - MINIMAP_MARGIN * 2);
-  // 有效的 Y 范围：-(容器高度 - 小地图高度 - 上下边距) 到 0
   const minY = Math.min(0, -(containerHeight - MINIMAP_HEIGHT - MINIMAP_MARGIN * 2));
-
   return {
     x: Math.max(0, Math.min(maxX, offset.x)),
     y: Math.max(minY, Math.min(0, offset.y))
   };
 }
 
-/**
- * 图谱内部组件（需要 ReactFlow context）
- */
 function GraphContent({
   qaTree,
   selectedPath,
@@ -71,13 +54,13 @@ function GraphContent({
   onNodeDoubleClick,
   onNodeContextMenu,
   graphContainerRef,
-  showMiniMap,
-  onToggleMiniMap
+  showMiniMap
 }) {
-  const { fitView, setCenter, getZoom, getViewport } = useReactFlow();
+  const { fitView, setCenter, getZoom } = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [expandedQNodes, setExpandedQNodes] = useState(new Set());
+  const prevNodeCountRef = useRef(0);
 
   const [miniMapOffset, setMiniMapOffset] = useState(() => {
     if (IS_EMBEDDED) return { x: 0, y: 0 };
@@ -99,120 +82,79 @@ function GraphContent({
     miniMapOffsetRef.current = miniMapOffset;
   }, [miniMapOffset]);
 
-  // 监听容器尺寸变化，自动修正小地图位置
   useEffect(() => {
     if (IS_EMBEDDED || !showMiniMap) return;
-
     const container = graphContainerRef?.current;
     if (!container) return;
 
-    const checkAndClampOffset = () => {
+    const clampOffset = () => {
       const { width, height } = container.getBoundingClientRect();
       if (width <= 0 || height <= 0) return;
-
-      const currentOffset = miniMapOffsetRef.current;
-      const clampedOffset = clampMiniMapOffset(currentOffset, width, height);
-
-      // 只有当位置真的需要修正时才更新
-      if (clampedOffset.x !== currentOffset.x || clampedOffset.y !== currentOffset.y) {
-        setMiniMapOffset(clampedOffset);
-        try {
-          localStorage.setItem(MINIMAP_POS_KEY, JSON.stringify(clampedOffset));
-        } catch {
-          // ignore
-        }
-      }
+      const current = miniMapOffsetRef.current;
+      const next = clampMiniMapOffset(current, width, height);
+      if (next.x === current.x && next.y === current.y) return;
+      setMiniMapOffset(next);
+      try { localStorage.setItem(MINIMAP_POS_KEY, JSON.stringify(next)); } catch {}
     };
 
-    // 初始检查
-    checkAndClampOffset();
-
-    // 监听容器尺寸变化
-    const resizeObserver = new ResizeObserver(checkAndClampOffset);
-    resizeObserver.observe(container);
-
-    return () => {
-      resizeObserver.disconnect();
-    };
+    clampOffset();
+    const observer = new ResizeObserver(clampOffset);
+    observer.observe(container);
+    return () => observer.disconnect();
   }, [showMiniMap, graphContainerRef]);
 
-  // Draggable minimap (sidebar mode only)
   useEffect(() => {
     if (IS_EMBEDDED || !showMiniMap) return;
-
     const root = graphContainerRef?.current || document;
     const panel = root.querySelector?.('[data-testid="rf__minimap"]');
     if (!panel) return;
 
-    panel.classList.add('cg-minimap');
-    panel.classList.add('cg-minimap-draggable');
-
+    panel.classList.add('cg-minimap', 'cg-minimap-draggable');
     const drag = {
       dragging: false,
-      pointerId: null,
       startX: 0,
       startY: 0,
       startOffsetX: 0,
       startOffsetY: 0
     };
 
-    const onPointerDown = (e) => {
-      if (e.button !== 0) return;
+    const onPointerDown = (event) => {
+      if (event.button !== 0) return;
       const rect = panel.getBoundingClientRect();
-      const y = e.clientY - rect.top;
-      // 只允许在顶部“拖拽条”区域拖动，避免和 minimap 交互冲突
-      if (y > MINIMAP_HANDLE_HEIGHT) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-
+      if (event.clientY - rect.top > MINIMAP_HANDLE_HEIGHT) return;
+      event.preventDefault();
+      event.stopPropagation();
       drag.dragging = true;
-      drag.pointerId = e.pointerId;
-      drag.startX = e.clientX;
-      drag.startY = e.clientY;
+      drag.startX = event.clientX;
+      drag.startY = event.clientY;
       drag.startOffsetX = miniMapOffsetRef.current.x;
       drag.startOffsetY = miniMapOffsetRef.current.y;
       panel.classList.add('cg-minimap-dragging');
-
-      try {
-        panel.setPointerCapture?.(e.pointerId);
-      } catch {
-        // ignore
-      }
+      try { panel.setPointerCapture?.(event.pointerId); } catch {}
     };
 
-    const onPointerMove = (e) => {
+    const onPointerMove = (event) => {
       if (!drag.dragging) return;
-      const dx = e.clientX - drag.startX;
-      const dy = e.clientY - drag.startY;
-      setMiniMapOffset({ x: drag.startOffsetX + dx, y: drag.startOffsetY + dy });
+      setMiniMapOffset({
+        x: drag.startOffsetX + event.clientX - drag.startX,
+        y: drag.startOffsetY + event.clientY - drag.startY
+      });
     };
 
     const endDrag = () => {
       if (!drag.dragging) return;
       drag.dragging = false;
       panel.classList.remove('cg-minimap-dragging');
-
-      // 拖动结束时进行边界检查
       const container = graphContainerRef?.current;
-      if (container) {
-        const { width, height } = container.getBoundingClientRect();
-        const clampedOffset = clampMiniMapOffset(miniMapOffsetRef.current, width, height);
-        if (clampedOffset.x !== miniMapOffsetRef.current.x || clampedOffset.y !== miniMapOffsetRef.current.y) {
-          setMiniMapOffset(clampedOffset);
-        }
-        try {
-          localStorage.setItem(MINIMAP_POS_KEY, JSON.stringify(clampedOffset));
-        } catch {
-          // ignore
-        }
-      } else {
-        try {
-          localStorage.setItem(MINIMAP_POS_KEY, JSON.stringify(miniMapOffsetRef.current));
-        } catch {
-          // ignore
-        }
-      }
+      const next = container
+        ? clampMiniMapOffset(
+            miniMapOffsetRef.current,
+            container.getBoundingClientRect().width,
+            container.getBoundingClientRect().height
+          )
+        : miniMapOffsetRef.current;
+      setMiniMapOffset(next);
+      try { localStorage.setItem(MINIMAP_POS_KEY, JSON.stringify(next)); } catch {}
     };
 
     panel.addEventListener('pointerdown', onPointerDown);
@@ -225,141 +167,98 @@ function GraphContent({
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', endDrag);
       window.removeEventListener('pointercancel', endDrag);
-      panel.classList.remove('cg-minimap-dragging');
-      panel.classList.remove('cg-minimap-draggable');
-      // cg-minimap class is harmless; keep it
+      panel.classList.remove('cg-minimap-dragging', 'cg-minimap-draggable');
     };
   }, [showMiniMap, graphContainerRef]);
 
-  // 标记是否已经初始化过视图
-  const hasInitializedView = useRef(false);
-
-  // 用于追踪是否应该 fitView（只在数据变化时，不在展开/折叠时）
-  const prevQaTreeRef = useRef(null);
-  const prevSelectedPathRef = useRef(null);
-  const prevCurrentNodeIdRef = useRef(null);
-  const prevNodeCountRef = useRef(0); // 追踪节点数量，用于判断是否真的是数据变化
-
-  // DEBUG: 监控视口变化
-  const lastViewportRef = useRef(null);
-  useEffect(() => {
-    const checkViewport = () => {
-      const viewport = getViewport();
-      const last = lastViewportRef.current;
-      if (!last || last.x !== viewport.x || last.y !== viewport.y || last.zoom !== viewport.zoom) {
-        console.log('[Graph DEBUG] Viewport changed:', viewport, 'from:', last);
-        lastViewportRef.current = { ...viewport };
-      }
-    };
-    const intervalId = setInterval(checkViewport, 200);
-    return () => clearInterval(intervalId);
-  }, [getViewport]);
-
-  // 展开/折叠回答的处理函数
   const handleExpandAnswer = useCallback((nodeId) => {
-    setExpandedQNodes(prev => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
+    setExpandedQNodes(previous => {
+      const next = new Set(previous);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
       return next;
     });
   }, []);
 
-  // 当 QA 树、选中路径或展开状态变化时，更新图谱
   useEffect(() => {
-    if (!qaTree || !qaTree.root || qaTree.root.questions.length === 0) {
+    if (!qaTree?.root?.questions?.length) {
       setNodes([]);
       setEdges([]);
       return;
     }
 
-    // 检测是否是 QA 树数据变化（通过节点数量判断，而不是引用）
-    // 如果只是选中路径变化（selectNode），节点数量不会变，不应该触发 fitView
-    const currentNodeCount = (qaTree.qNodeMap?.size || 0) + (qaTree.aNodeMap?.size || 0);
-    const isTreeDataChange = prevNodeCountRef.current !== currentNodeCount;
-    prevNodeCountRef.current = currentNodeCount;
-    prevQaTreeRef.current = qaTree;
-    prevSelectedPathRef.current = selectedPath;
+    const semanticNodeCount = (qaTree.qNodeMap?.size || 0) + (qaTree.aNodeMap?.size || 0);
+    const isTreeDataChange = prevNodeCountRef.current !== semanticNodeCount;
+    prevNodeCountRef.current = semanticNodeCount;
 
-    console.log('[Graph DEBUG] useEffect triggered:',
-      'isTreeDataChange:', isTreeDataChange,
-      'nodeCount:', currentNodeCount,
-      'prev:', prevNodeCountRef.current
-    );
-
-    // 从 QA 树构建并布局
-    const { nodes: layoutedNodes, edges: layoutedEdges } = buildAndLayoutQATree(
-      qaTree,
-      selectedPath,
-      'TB',
-      expandedQNodes
-    );
-
-    // 为节点注入展开回调
-    const nodesWithHandlers = layoutedNodes.map(node => ({
+    const layouted = buildAndLayoutQATree(qaTree, selectedPath, 'TB', expandedQNodes);
+    setNodes(layouted.nodes.map(node => ({
       ...node,
       data: {
         ...node.data,
         onExpandAnswer: handleExpandAnswer
       }
-    }));
+    })));
+    setEdges(layouted.edges);
 
-    console.log('[Graph] Layout complete:',
-      nodesWithHandlers.length, 'nodes,',
-      layoutedEdges.length, 'edges'
-    );
-
-    setNodes(nodesWithHandlers);
-    setEdges(layoutedEdges);
-
-    // 只在 QA 树数据变化时适应视图（新对话或刷新），选中路径变化不触发
     if (isTreeDataChange) {
-      console.log('[Graph DEBUG] isTreeDataChange=true => calling fitView');
-      setTimeout(() => {
-        fitView({ padding: 0.2, duration: 300 });
-      }, 100);
-    } else {
-      console.log('[Graph DEBUG] isTreeDataChange=false => NOT calling fitView');
+      const timer = setTimeout(() => {
+        fitView({ padding: 0.2, duration: 260 });
+      }, 80);
+      return () => clearTimeout(timer);
     }
-
   }, [qaTree, selectedPath, expandedQNodes, setNodes, setEdges, fitView, handleExpandAnswer]);
 
-  // 处理节点点击
-  const handleNodeClick = useCallback((event, node) => {
-    console.log('[Graph DEBUG] Node clicked:', node.id, node.data?.nodeType);
-    // 忽略起始节点的点击
+  const focusNode = useCallback((node) => {
+    if (!node) return;
+    if (node.data?.nodeType === 'start') {
+      fitView({ padding: 0.25, duration: 240 });
+      return;
+    }
+
+    const compact = node.data?.isInlineExpandedAnswer === true;
+    const width = node.measured?.width || node.width || (compact ? INLINE_ANSWER_WIDTH : GRAPH_NODE_WIDTH);
+    const height = node.measured?.height || node.height || (compact ? INLINE_ANSWER_HEIGHT : GRAPH_NODE_HEIGHT);
+    const centerX = node.position.x + width / 2;
+    const centerY = node.position.y + height / 2;
+    const currentZoom = getZoom();
+    const targetZoom = currentZoom < 0.78 ? 1.0 : Math.min(Math.max(currentZoom, 0.9), 1.22);
+    setCenter(centerX, centerY, { zoom: targetZoom, duration: 260 });
+  }, [fitView, getZoom, setCenter]);
+
+  const handleNodeClick = useCallback((_event, node) => {
     if (node.data?.nodeType === 'start') return;
     onNodeClick?.(node.data.nodeId, node.data);
   }, [onNodeClick]);
 
-  // 处理节点双击
   const handleNodeDoubleClick = useCallback((event, node) => {
-    if (node.data?.nodeType === 'start') return;
-    onNodeDoubleClick?.(node.data.nodeId, node.data);
-  }, [onNodeDoubleClick]);
+    event.preventDefault();
+    event.stopPropagation();
+    focusNode(node);
+    if (node.data?.nodeType !== 'start') {
+      onNodeDoubleClick?.(node.data.nodeId, node.data);
+    }
+  }, [focusNode, onNodeDoubleClick]);
 
-  // 处理节点右键
   const handleNodeContextMenu = useCallback((event, node) => {
+    event.preventDefault();
+    event.stopPropagation();
     if (node.data?.nodeType === 'start') return;
     onNodeContextMenu?.(event, node.data.nodeId, node.data);
   }, [onNodeContextMenu]);
 
-  // MiniMap 节点颜色
+  const handlePaneContextMenu = useCallback((event) => {
+    event.preventDefault();
+  }, []);
+
   const nodeColor = useCallback((node) => {
-    if (node.data?.nodeType === 'start') {
-      return '#94a3b8';
-    }
-    if (node.data?.isSelected) {
-      return node.data?.nodeType === 'question' ? '#3b82f6' : '#22c55e';
-    }
-    return node.data?.nodeType === 'question' ? '#93c5fd' : '#86efac';
+    if (node.data?.nodeType === 'start') return '#777777';
+    return node.data?.isSelected ? '#a0a0a0' : '#686868';
   }, []);
 
   return (
     <ReactFlow
+      className="cg-graph-interactive"
       nodes={nodes}
       edges={edges}
       onNodesChange={onNodesChange}
@@ -367,8 +266,13 @@ function GraphContent({
       onNodeClick={handleNodeClick}
       onNodeDoubleClick={handleNodeDoubleClick}
       onNodeContextMenu={handleNodeContextMenu}
+      onPaneContextMenu={handlePaneContextMenu}
       nodeTypes={nodeTypes}
       defaultEdgeOptions={defaultEdgeOptions}
+      nodesDraggable={false}
+      panOnDrag={[0, 1, 2]}
+      selectionOnDrag={false}
+      zoomOnDoubleClick={false}
       nodeDragThreshold={5}
       minZoom={0.1}
       maxZoom={2}
@@ -396,20 +300,16 @@ function GraphContent({
                 }
           }
           nodeColor={nodeColor}
-          nodeStrokeWidth={3}
+          nodeStrokeWidth={2}
           zoomable
           pannable
           position="bottom-left"
         />
       )}
-      <Background variant="dots" gap={20} size={1} color="#e5e7eb" />
     </ReactFlow>
   );
 }
 
-/**
- * 对话图谱组件（带 Provider）
- */
 function ConversationGraph({
   qaTree,
   selectedPath,
@@ -417,16 +317,12 @@ function ConversationGraph({
   onNodeClick,
   onNodeDoubleClick,
   onNodeContextMenu,
-  showMiniMap = !IS_EMBEDDED,
-  onToggleMiniMap
+  showMiniMap = !IS_EMBEDDED
 }) {
   const containerRef = useRef(null);
 
   return (
-    <div
-      ref={containerRef}
-      className="graph-container"
-    >
+    <div ref={containerRef} className="graph-container">
       <ReactFlowProvider>
         <GraphContent
           qaTree={qaTree}
@@ -437,7 +333,6 @@ function ConversationGraph({
           onNodeContextMenu={onNodeContextMenu}
           graphContainerRef={containerRef}
           showMiniMap={showMiniMap}
-          onToggleMiniMap={onToggleMiniMap}
         />
       </ReactFlowProvider>
     </div>
