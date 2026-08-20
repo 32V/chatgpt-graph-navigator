@@ -34,7 +34,6 @@ import {
   resolveMessageId
 } from './utils/message-id-helper.js';
 import { initCollapseManager, setupSettingsListener } from './collapse/collapse-manager.js';
-import { toggleFloatingPanel, toggleClickThrough, toggleLock } from './ui/floating-panel.js';
 
 let urlObserver = null;
 let messageObserver = null;
@@ -73,8 +72,6 @@ function setupAssistantStreamSettingsListener() {
 
 function setupMessageListener() {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    log('debug', 'Content', 'Received message:', message.type);
-
     if (message.type === MESSAGE_TYPES.SCROLL_TO_MESSAGE) {
       const { messageId } = message.payload || {};
       if (!messageId) {
@@ -88,13 +85,6 @@ function setupMessageListener() {
           log('error', 'Content', 'scrollToMessage error:', error);
           sendResponse({ success: false, error: error.message });
         });
-      return true;
-    }
-
-    if (message.type === MESSAGE_TYPES.TOGGLE_FLOATING_PANEL) {
-      toggleFloatingPanel()
-        .then(opened => sendResponse({ success: true, opened }))
-        .catch(error => sendResponse({ success: false, error: error?.message || 'Toggle failed' }));
       return true;
     }
 
@@ -123,22 +113,6 @@ function setupMessageListener() {
       return true;
     }
 
-    if (message.type === MESSAGE_TYPES.UPDATE_FLOATING_PANEL_STATE) {
-      const action = message.payload?.action;
-      if (action === 'toggleClickThrough') {
-        toggleClickThrough()
-          .then(() => sendResponse({ success: true }))
-          .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
-        return true;
-      }
-      if (action === 'toggleLock') {
-        toggleLock()
-          .then(() => sendResponse({ success: true }))
-          .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
-        return true;
-      }
-    }
-
     if (message.type === MESSAGE_TYPES.ASSISTANT_STREAM_SETTINGS_CHANGED) {
       (async () => {
         await loadAssistantStreamSettings();
@@ -154,51 +128,14 @@ function setupMessageListener() {
   });
 }
 
-function setupFloatingHotkeys() {
-  const isTypingTarget = (element) => {
-    if (!element) return false;
-    const tag = (element.tagName || '').toLowerCase();
-    return tag === 'input' || tag === 'textarea' || element.isContentEditable;
-  };
-
-  window.addEventListener('keydown', (event) => {
-    if (isTypingTarget(event.target) || !event.altKey || !event.shiftKey) return;
-
-    if (event.code === 'KeyG') {
-      event.preventDefault();
-      void toggleFloatingPanel();
-    } else if (event.code === 'KeyT') {
-      event.preventDefault();
-      void toggleClickThrough();
-    } else if (event.code === 'KeyL') {
-      event.preventDefault();
-      void toggleLock();
-    }
-  }, { capture: true });
-}
-
 async function scrollToMessage(messageId) {
-  log('info', 'Content', `Scrolling to message: ${messageId.substring(0, 16)}...`);
-
   let targetElement = findMessageElement(messageId);
-  if (targetElement) {
-    const success = await scrollUntilVisible(targetElement);
-    log(success ? 'info' : 'warn', 'Content', success
-      ? 'Scrolled to message'
-      : 'Scroll may not have reached exact position');
-    return success;
-  }
+  if (targetElement) return scrollUntilVisible(targetElement);
 
-  if (!conversationState.isReady()) {
-    log('warn', 'Content', 'Conversation state not initialized, cannot navigate');
-    return false;
-  }
+  if (!conversationState.isReady()) return false;
 
   const nodes = conversationState.getNodes();
-  if (!nodes?.length) {
-    log('warn', 'Content', 'No nodes available for navigation');
-    return false;
-  }
+  if (!nodes?.length) return false;
 
   try {
     const result = await navigateToMessage(messageId, nodes);
@@ -209,16 +146,7 @@ async function scrollToMessage(messageId) {
 
     await delay(300);
     targetElement = findMessageElement(messageId);
-    if (!targetElement) {
-      log('warn', 'Content', 'Message element still not found after navigation');
-      return false;
-    }
-
-    const success = await scrollUntilVisible(targetElement);
-    log(success ? 'info' : 'warn', 'Content', success
-      ? 'Scrolled to message after branch navigation'
-      : 'Scroll may not have reached exact position after branch navigation');
-    return success;
+    return targetElement ? scrollUntilVisible(targetElement) : false;
   } catch (error) {
     log('error', 'Content', 'Branch navigation error:', error);
     return false;
@@ -357,7 +285,7 @@ function findMessageElement(messageId) {
   for (const candidate of getAllMessageContainers()) {
     const domMessageId = resolveMessageId(candidate);
     const domTurnId = candidate.getAttribute('data-turn-id');
-    const isMatch = (value) => Boolean(
+    const isMatch = value => Boolean(
       value &&
       value.length >= MIN_SAFE_LENGTH &&
       (value.includes(messageId) || messageId.includes(value))
@@ -393,7 +321,7 @@ async function main() {
   await initDebugLogSetting();
 
   if (!chrome.runtime?.id) {
-    showExtensionReloadWarning();
+    console.warn('[ChatGPT Graph] Extension context invalidated. Refresh this page.');
     return;
   }
 
@@ -401,7 +329,6 @@ async function main() {
   await loadAssistantStreamSettings();
   setupAssistantStreamSettingsListener();
   setupMessageListener();
-  setupFloatingHotkeys();
   setupSettingsListener();
 
   try {
@@ -413,16 +340,13 @@ async function main() {
   if (!isConversationPage()) return;
 
   const conversationId = extractConversationId();
-  if (!conversationId) {
-    log('error', 'Content', 'Failed to extract conversation ID');
-    return;
-  }
+  if (!conversationId) return;
 
   await waitForPageReady();
 
   const tokenLoaded = await loadToken();
   if (!tokenLoaded || !hasToken()) {
-    showTokenSetupPrompt();
+    console.warn('[ChatGPT Graph] Authentication token unavailable. Use ChatGPT normally or open the extension settings.');
     return;
   }
 
@@ -509,10 +433,7 @@ function startURLObserver() {
 
 function startMessageObserver() {
   messageObserver?.stop();
-
-  messageObserver = createMessageObserver((messageData) => {
-    handleIncrementalMessage(messageData);
-  });
+  messageObserver = createMessageObserver(handleIncrementalMessage);
 }
 
 function handleIncrementalMessage(messageData) {
@@ -521,24 +442,11 @@ function handleIncrementalMessage(messageData) {
   if (messageData?.id) pendingObservedMessageIds.add(messageData.id);
   logCanonicalSyncObservation(messageData);
 
-  const delayMs = messageData?.role === 'user'
-    ? CANONICAL_SYNC_USER_DELAY
-    : CANONICAL_SYNC_ASSISTANT_DELAY;
-  scheduleCanonicalSync(delayMs);
-}
-
-function showExtensionReloadWarning() {
-  console.group('ChatGPT Graph - Extension Reloaded');
-  console.warn('Extension context invalidated');
-  console.log('Refresh this page to restore the extension.');
-  console.groupEnd();
-}
-
-function showTokenSetupPrompt() {
-  console.group('ChatGPT Graph - Setup Required');
-  console.error('Authentication token not configured');
-  console.log('Open the extension settings, complete token setup, then refresh this page.');
-  console.groupEnd();
+  scheduleCanonicalSync(
+    messageData?.role === 'user'
+      ? CANONICAL_SYNC_USER_DELAY
+      : CANONICAL_SYNC_ASSISTANT_DELAY
+  );
 }
 
 async function waitForPageReady() {
@@ -551,10 +459,7 @@ async function fetchAndProcessConversation(conversationId) {
     const data = await fetchConversationWithRetry(conversationId);
     if (!data?.mapping) throw new Error('Invalid conversation data');
 
-    if (extractConversationId() !== conversationId) {
-      log('debug', 'Content', `Discarding stale conversation response: ${conversationId}`);
-      return null;
-    }
+    if (extractConversationId() !== conversationId) return null;
 
     const parsed = parseMapping(data.mapping, conversationId);
     const normalized = normalizeAssistantStreamNodes(parsed.nodes, {
@@ -563,17 +468,15 @@ async function fetchAndProcessConversation(conversationId) {
     });
     const nodes = normalized.nodes;
     const edges = parsed.nodes.length > 0 ? normalized.edges : parsed.edges;
-    const stats = getNodeStatistics(nodes);
     const branches = extractBranches(nodes);
     const rounds = buildRounds(nodes);
     const analysis = analyzeBranchStructure(nodes);
 
     log('info', 'Content', 'Conversation parsed', {
-      nodes: nodes.length,
+      ...getNodeStatistics(nodes),
       edges: edges.length,
       branches: branches.length,
-      rounds: rounds.length,
-      ...stats
+      rounds: rounds.length
     });
 
     const conversationData = {
@@ -606,9 +509,7 @@ async function fetchAndProcessConversation(conversationId) {
         message: error.message,
         stack: error.stack
       });
-    } catch (backgroundError) {
-      log('warn', 'Content', 'Could not send error to background:', backgroundError.message);
-    }
+    } catch {}
     return null;
   }
 }
@@ -628,10 +529,9 @@ async function sendToBackground(type, payload, retries = 3) {
         });
       });
     } catch (error) {
-      const isLastAttempt = attempt === retries;
-      const isConnectionError = error.message?.includes('Receiving end does not exist');
-      if (!isConnectionError) throw error;
-      if (isLastAttempt) {
+      const connectionError = error.message?.includes('Receiving end does not exist');
+      if (!connectionError) throw error;
+      if (attempt === retries) {
         throw new Error('Background script not responding. Reload the extension or refresh the page.');
       }
       await delay(500 * attempt);
@@ -654,20 +554,15 @@ function logDebugInfo(conversationData) {
     Branches: conversationData.branches.length,
     'Branch Points': conversationData.analysis.branchPointsCount
   });
-  console.log('Full Data:', conversationData);
   console.groupEnd();
 }
 
 function logCanonicalSyncObservation(messageData) {
   if (!getDebugLogEnabled()) return;
-
-  console.group('ChatGPT Graph - Canonical Sync Scheduled');
-  console.log('DOM change signal:', {
-    ID: messageData?.id?.substring(0, 16) + '...',
-    Role: messageData?.role,
-    'Content Length': messageData?.content?.length || 0
+  console.log('[ChatGPT Graph] Canonical sync scheduled', {
+    id: messageData?.id?.substring(0, 16),
+    role: messageData?.role
   });
-  console.groupEnd();
 }
 
 if (globalThis[CONTENT_SCRIPT_GUARD]) {
