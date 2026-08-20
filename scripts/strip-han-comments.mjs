@@ -97,7 +97,13 @@ for (const path of files) {
   let next = source;
 
   if (rel === 'src/content/utils/branch-navigator.js') {
-    next = next.replace('|上一', '').replace('|下一', '');
+    const legacyLabels = [
+      '|\u4e0a\u4e00',
+      '|\u4e0b\u4e00',
+      '|\uc774\uc804',
+      '|\ub2e4\uc74c'
+    ];
+    for (const label of legacyLabels) next = next.replace(label, '');
   }
 
   const ext = extname(path);
