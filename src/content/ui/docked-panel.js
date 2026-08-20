@@ -1,9 +1,7 @@
 /**
  * Docked conversation graph panel injected into ChatGPT.
- *
- * The panel behaves like a VS Code secondary sidebar: it opens automatically on
- * conversation pages, occupies layout space instead of floating over the chat,
- * can be resized from its left edge, and collapses to a narrow rail.
+ * Behaves like a secondary sidebar: automatic, resizable, collapsible, and
+ * theme-synchronized with the host page.
  */
 
 import { log, throttle } from '../../shared/utils.js';
@@ -12,20 +10,27 @@ const PANEL_ID = '__chatgpt_graph_docked_panel__';
 const STYLE_ID = '__chatgpt_graph_docked_panel_style__';
 const BODY_CLASS = 'cg-graph-dock-visible';
 const STORAGE_KEY = 'chatgpt_graph_dock_state_v1';
-const MIN_WIDTH = 240;
-const MAX_WIDTH = 600;
-const DEFAULT_WIDTH = 360;
+const MIN_WIDTH = 260;
+const DEFAULT_WIDTH = 380;
 const RAIL_WIDTH = 36;
+const MIN_CHAT_REMAINDER = 320;
 const EXTENSION_ORIGIN = new URL(chrome.runtime.getURL('/')).origin;
+const CONVERSATION_PATH_RE = /^\/c\/[0-9a-f-]+/i;
 
 let currentState = null;
 let themeObserver = null;
 let mediaQuery = null;
 let mediaListener = null;
 let panelMessageListener = null;
+let viewportResizeListener = null;
+let routeTimer = null;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function getMaxPanelWidth() {
+  return Math.max(MIN_WIDTH, window.innerWidth - MIN_CHAT_REMAINDER);
 }
 
 async function loadState() {
@@ -33,14 +38,14 @@ async function loadState() {
     const result = await chrome.storage.local.get([STORAGE_KEY]);
     const stored = result?.[STORAGE_KEY];
     if (!stored || typeof stored !== 'object') {
-      return { width: DEFAULT_WIDTH, collapsed: false };
+      return { width: Math.min(DEFAULT_WIDTH, getMaxPanelWidth()), collapsed: false };
     }
     return {
-      width: clamp(Number(stored.width) || DEFAULT_WIDTH, MIN_WIDTH, MAX_WIDTH),
+      width: clamp(Number(stored.width) || DEFAULT_WIDTH, MIN_WIDTH, getMaxPanelWidth()),
       collapsed: stored.collapsed === true
     };
   } catch {
-    return { width: DEFAULT_WIDTH, collapsed: false };
+    return { width: Math.min(DEFAULT_WIDTH, getMaxPanelWidth()), collapsed: false };
   }
 }
 
@@ -86,24 +91,27 @@ function ensureStyles() {
       color-scheme: light dark;
     }
 
-    #${PANEL_ID}.cg-dock-collapsed {
-      width: ${RAIL_WIDTH}px;
+    #${PANEL_ID}.cg-dock-resizing {
+      transition: none !important;
     }
+
+    #${PANEL_ID}.cg-dock-collapsed { width: ${RAIL_WIDTH}px; }
 
     #${PANEL_ID} .cg-dock-resizer {
       position: absolute;
-      left: -3px;
+      left: -4px;
       top: 0;
       bottom: 0;
-      width: 7px;
+      width: 9px;
       cursor: ew-resize;
       z-index: 4;
+      touch-action: none;
     }
 
     #${PANEL_ID} .cg-dock-resizer::after {
       content: '';
       position: absolute;
-      left: 3px;
+      left: 4px;
       top: 0;
       bottom: 0;
       width: 1px;
@@ -116,9 +124,7 @@ function ensureStyles() {
       background: color-mix(in srgb, var(--cg-host-fg) 30%, transparent);
     }
 
-    #${PANEL_ID}.cg-dock-collapsed .cg-dock-resizer {
-      display: none;
-    }
+    #${PANEL_ID}.cg-dock-collapsed .cg-dock-resizer { display: none; }
 
     #${PANEL_ID} .cg-dock-header {
       height: 44px;
@@ -142,14 +148,10 @@ function ensureStyles() {
 
     #${PANEL_ID} .cg-dock-title {
       min-width: 0;
-      font-size: 13px;
-      font-weight: 600;
-      line-height: 1;
-      opacity: .88;
       margin-right: auto;
-      white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     #${PANEL_ID} .cg-dock-segment {
@@ -157,15 +159,12 @@ function ensureStyles() {
       align-items: center;
       gap: 2px;
       padding: 2px;
-      border-radius: 9px;
-      background: color-mix(in srgb, var(--cg-host-fg) 6%, transparent);
     }
 
     #${PANEL_ID} .cg-dock-button {
       width: 28px;
       height: 28px;
       border: 0;
-      border-radius: 7px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -173,38 +172,17 @@ function ensureStyles() {
       background: transparent;
       color: inherit;
       cursor: pointer;
-      opacity: .72;
-      transition: background-color 110ms ease, opacity 110ms ease;
-    }
-
-    #${PANEL_ID} .cg-dock-button:hover {
-      background: color-mix(in srgb, var(--cg-host-fg) 8%, transparent);
-      opacity: 1;
-    }
-
-    #${PANEL_ID} .cg-dock-button.cg-active {
-      background: color-mix(in srgb, var(--cg-host-fg) 11%, transparent);
-      opacity: 1;
     }
 
     #${PANEL_ID} .cg-dock-button img {
       width: 16px;
       height: 16px;
-      opacity: .8;
       filter: var(--cg-dock-icon-filter, none);
-    }
-
-    #${PANEL_ID} .cg-dock-collapse {
-      font-size: 20px;
-      font-weight: 300;
-      line-height: 1;
     }
 
     #${PANEL_ID}.cg-dock-collapsed .cg-dock-title,
     #${PANEL_ID}.cg-dock-collapsed .cg-dock-segment,
-    #${PANEL_ID}.cg-dock-collapsed [data-action="refresh"] {
-      display: none;
-    }
+    #${PANEL_ID}.cg-dock-collapsed [data-action="refresh"] { display: none; }
 
     #${PANEL_ID} .cg-dock-body {
       flex: 1 1 auto;
@@ -212,15 +190,13 @@ function ensureStyles() {
       background: var(--cg-host-bg);
     }
 
-    #${PANEL_ID}.cg-dock-collapsed .cg-dock-body {
-      display: none;
-    }
+    #${PANEL_ID}.cg-dock-collapsed .cg-dock-body { display: none; }
 
     #${PANEL_ID} iframe {
       width: 100%;
       height: 100%;
-      border: 0;
       display: block;
+      border: 0;
       background: var(--cg-host-bg);
     }
   `;
@@ -262,10 +238,8 @@ function readChatGptTheme() {
     if (!foreground && style.color) foreground = style.color;
   }
 
-  const darkClass = document.documentElement.classList.contains('dark') ||
-    document.body?.classList.contains('dark');
+  const darkClass = document.documentElement.classList.contains('dark') || document.body?.classList.contains('dark');
   const dark = darkClass || (background ? luminance(background) < 0.32 : false);
-
   return {
     mode: dark ? 'dark' : 'light',
     background: background || (dark ? 'rgb(33, 33, 33)' : 'rgb(255, 255, 255)'),
@@ -275,11 +249,7 @@ function readChatGptTheme() {
 
 function postToFrame(panel, message) {
   const frame = panel?.querySelector('iframe');
-  try {
-    frame?.contentWindow?.postMessage(message, EXTENSION_ORIGIN);
-  } catch {
-    // Frame may not be ready yet.
-  }
+  try { frame?.contentWindow?.postMessage(message, EXTENSION_ORIGIN); } catch {}
 }
 
 function applyTheme(panel) {
@@ -289,6 +259,16 @@ function applyTheme(panel) {
   panel.style.setProperty('--cg-host-fg', theme.foreground);
   panel.style.setProperty('--cg-dock-icon-filter', theme.mode === 'dark' ? 'invert(1)' : 'none');
   postToFrame(panel, { type: 'CG_THEME', payload: theme });
+}
+
+function stopThemeSync() {
+  themeObserver?.disconnect();
+  themeObserver = null;
+  if (mediaQuery && mediaListener) {
+    try { mediaQuery.removeEventListener('change', mediaListener); } catch {}
+  }
+  mediaQuery = null;
+  mediaListener = null;
 }
 
 function startThemeSync(panel) {
@@ -319,21 +299,16 @@ function startThemeSync(panel) {
     mediaQuery = null;
     mediaListener = null;
   }
-
   applyTheme(panel);
 }
 
-function stopThemeSync() {
-  themeObserver?.disconnect();
-  themeObserver = null;
-  if (mediaQuery && mediaListener) {
-    try { mediaQuery.removeEventListener('change', mediaListener); } catch {}
-  }
-  mediaQuery = null;
-  mediaListener = null;
-}
-
 function applyLayout(panel, state) {
+  const width = clamp(state.width, MIN_WIDTH, getMaxPanelWidth());
+  if (width !== state.width) {
+    currentState = { ...state, width };
+    state = currentState;
+  }
+
   const occupied = state.collapsed ? RAIL_WIDTH : state.width;
   panel.style.setProperty('--cg-dock-panel-width', `${state.width}px`);
   panel.classList.toggle('cg-dock-collapsed', state.collapsed);
@@ -344,6 +319,7 @@ function applyLayout(panel, state) {
   if (collapseButton) {
     collapseButton.textContent = state.collapsed ? '‹' : '›';
     collapseButton.title = state.collapsed ? 'Expand conversation graph' : 'Collapse conversation graph';
+    collapseButton.setAttribute('aria-label', collapseButton.title);
   }
 }
 
@@ -352,7 +328,7 @@ function setupResize(panel) {
   if (!handle) return;
 
   handle.addEventListener('pointerdown', (event) => {
-    if (!currentState || currentState.collapsed) return;
+    if (!currentState || currentState.collapsed || event.button !== 0) return;
     event.preventDefault();
     handle.setPointerCapture?.(event.pointerId);
     panel.classList.add('cg-dock-resizing');
@@ -360,7 +336,11 @@ function setupResize(panel) {
     const startWidth = currentState.width;
 
     const onMove = (moveEvent) => {
-      const nextWidth = clamp(startWidth + (startX - moveEvent.clientX), MIN_WIDTH, MAX_WIDTH);
+      const nextWidth = clamp(
+        startWidth + (startX - moveEvent.clientX),
+        MIN_WIDTH,
+        getMaxPanelWidth()
+      );
       currentState = { ...currentState, width: nextWidth };
       applyLayout(panel, currentState);
       saveState(currentState);
@@ -370,11 +350,23 @@ function setupResize(panel) {
       panel.classList.remove('cg-dock-resizing');
       window.removeEventListener('pointermove', onMove, true);
       window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
     };
 
     window.addEventListener('pointermove', onMove, true);
     window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
   });
+
+  viewportResizeListener = () => {
+    if (!currentState || currentState.collapsed) return;
+    const nextWidth = clamp(currentState.width, MIN_WIDTH, getMaxPanelWidth());
+    if (nextWidth === currentState.width) return;
+    currentState = { ...currentState, width: nextWidth };
+    applyLayout(panel, currentState);
+    saveState(currentState);
+  };
+  window.addEventListener('resize', viewportResizeListener);
 }
 
 function setActiveView(panel, mode) {
@@ -483,6 +475,10 @@ export function closeDockPanel() {
     window.removeEventListener('message', panelMessageListener);
     panelMessageListener = null;
   }
+  if (viewportResizeListener) {
+    window.removeEventListener('resize', viewportResizeListener);
+    viewportResizeListener = null;
+  }
   panel?.remove();
   document.body?.classList.remove(BODY_CLASS);
   document.documentElement.style.removeProperty('--cg-dock-occupied-width');
@@ -502,8 +498,6 @@ export async function toggleDockPanel() {
   saveState(currentState);
   return !currentState.collapsed;
 }
-
-const CONVERSATION_PATH_RE = /^\/c\/[0-9a-f-]+/i;
 
 function isConversationRoute() {
   return CONVERSATION_PATH_RE.test(window.location.pathname || '');
@@ -531,17 +525,13 @@ function setupDockRuntime() {
     const tag = (target?.tagName || '').toLowerCase();
     const typing = tag === 'input' || tag === 'textarea' || target?.isContentEditable;
     if (typing || !event.altKey || !event.shiftKey || event.code !== 'KeyG') return;
-
-    // Own the legacy floating-panel shortcut before the older content module sees it.
     event.preventDefault();
     event.stopImmediatePropagation();
     toggleDockPanel();
   }, { capture: true });
 
   void syncDockToRoute();
-  setInterval(() => {
-    void syncDockToRoute();
-  }, 600);
+  routeTimer = setInterval(() => { void syncDockToRoute(); }, 600);
 }
 
 if (!globalThis.__chatgptGraphDockInitialized) {
