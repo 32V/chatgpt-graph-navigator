@@ -2,6 +2,7 @@ import React, { memo, useCallback, useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
 const PREVIEW_LIMIT = 72;
+const COMPACT_PREVIEW_LIMIT = 58;
 const EXPANDED_LIMIT = 300;
 
 function truncate(text, maxLength) {
@@ -69,15 +70,12 @@ function QANode({ data, selected }) {
     childCount,
     canExpand,
     isExpanded,
-    onExpandAnswer
+    onExpandAnswer,
+    isInlineExpandedAnswer
   } = data;
 
   const isQuestion = nodeType === 'question';
-  const displayText = isContentExpanded
-    ? truncate(content, EXPANDED_LIMIT)
-    : truncate(preview || content, PREVIEW_LIMIT);
   const normalizedContent = (content || '').replace(/\s+/g, ' ').trim();
-  const hasMore = normalizedContent.length > PREVIEW_LIMIT;
 
   const stopEvent = useCallback((event) => {
     event.stopPropagation();
@@ -92,6 +90,32 @@ function QANode({ data, selected }) {
     event.stopPropagation();
     onExpandAnswer?.(nodeId);
   }, [onExpandAnswer, nodeId]);
+
+  if (isInlineExpandedAnswer) {
+    const compactText = truncate(preview || content, COMPACT_PREVIEW_LIMIT);
+    return (
+      <article
+        className={`qa-node answer compact-answer ${isSelected ? 'on-path' : ''} ${selected ? 'selected' : ''}`}
+        data-node-role="answer"
+        aria-current={selected ? 'true' : undefined}
+      >
+        <Handle type="target" position={Position.Top} className="qa-node-handle" />
+        <span className="qa-node-compact-icon" aria-hidden="true">
+          <AssistantIcon />
+        </span>
+        <p className="qa-node-compact-text" title={content}>
+          {compactText || 'Empty response'}
+        </p>
+        <div className="qa-node-path-indicator" aria-hidden="true" />
+        <Handle type="source" position={Position.Bottom} className="qa-node-handle" />
+      </article>
+    );
+  }
+
+  const displayText = isContentExpanded
+    ? truncate(content, EXPANDED_LIMIT)
+    : truncate(preview || content, PREVIEW_LIMIT);
+  const hasMore = normalizedContent.length > PREVIEW_LIMIT;
 
   return (
     <article
