@@ -1,12 +1,9 @@
 /**
- * IndexedDB 操作封装
+ * IndexedDB persistence wrapper.
  */
 
 import { DB_NAME, DB_VERSION, OBJECT_STORES, upgradeDatabase } from './schema.js';
 
-/**
- * 数据库管理类
- */
 export class Database {
   constructor() {
     this.db = null;
@@ -17,14 +14,8 @@ export class Database {
     return Object.prototype.hasOwnProperty.call(object, key);
   }
 
-  /**
-   * 打开数据库
-   * @returns {Promise<IDBDatabase>}
-   */
   async open() {
-    if (this.db) {
-      return this.db;
-    }
+    if (this.db) return this.db;
 
     if (!this.openPromise) {
       this.openPromise = this._openWithRecovery().finally(() => {
@@ -44,7 +35,6 @@ export class Database {
         await this._resetDatabase();
         return this._openWithRecovery(true);
       }
-
       throw error;
     }
   }
@@ -78,7 +68,6 @@ export class Database {
         console.log('[DB] Database opened successfully');
         console.log('[DB] Object stores:', Array.from(this.db.objectStoreNames));
 
-        // 验证对象存储是否存在
         const requiredStores = Object.keys(OBJECT_STORES);
         const missingStores = requiredStores.filter(store => !this.db.objectStoreNames.contains(store));
 
@@ -121,12 +110,10 @@ export class Database {
         console.warn('[DB] Database reset completed');
         resolve();
       };
-
       request.onerror = () => {
         console.error('[DB] Failed to reset database:', request.error);
         reject(request.error);
       };
-
       request.onblocked = () => {
         const error = new Error('Database reset blocked');
         console.error('[DB] Database reset blocked. Close other extension contexts and retry.');
@@ -135,11 +122,6 @@ export class Database {
     });
   }
 
-  /**
-   * 保存对话
-   * @param {Object} conversation - 对话数据
-   * @returns {Promise<void>}
-   */
   async saveConversation(conversation) {
     const db = await this.open();
     const tx = db.transaction('conversations', 'readwrite');
@@ -147,12 +129,10 @@ export class Database {
 
     return new Promise((resolve, reject) => {
       const request = store.put(conversation);
-
       request.onsuccess = () => {
         console.log(`[DB] Conversation saved: ${conversation.id}`);
         resolve();
       };
-
       request.onerror = () => {
         console.error('[DB] Failed to save conversation:', request.error);
         reject(request.error);
@@ -160,31 +140,15 @@ export class Database {
     });
   }
 
-  /**
-   * 更新对话
-   * @param {string} id - 对话 ID
-   * @param {Object} updates - 更新的字段
-   * @returns {Promise<void>}
-   */
   async updateConversation(id, updates) {
-    const db = await this.open();
-
-    // 获取现有对话
     const existing = await this.getConversation(id);
-    if (!existing) {
-      throw new Error(`Conversation not found: ${id}`);
-    }
+    if (!existing) throw new Error(`Conversation not found: ${id}`);
 
-    // 合并更新
-    const updated = { ...existing, ...updates };
+    await this.saveConversation({ ...existing, ...updates });
 
-    // 保存更新后的对话
-    await this.saveConversation(updated);
-
-    // 节点/边/轮次/分支是整会话快照，不是 append-only 日志。
-    // 先清掉该会话的旧图数据，再写入最新快照，避免脏节点残留。
+    // Graph records are whole-conversation snapshots, not append-only logs.
+    // Replace the old records so stale nodes cannot survive a canonical refresh.
     await this.replaceConversationGraphData(id, updates);
-
     console.log(`[DB] ✓ Conversation updated: ${id}`);
   }
 
@@ -197,9 +161,7 @@ export class Database {
     ];
 
     for (const { key, storeName, saver } of replacements) {
-      if (!this._hasOwn(data, key)) {
-        continue;
-      }
+      if (!this._hasOwn(data, key)) continue;
 
       const items = Array.isArray(data[key]) ? data[key] : [];
       await this.deleteRecordsByConversation(storeName, conversationId);
@@ -223,46 +185,34 @@ export class Database {
       let settled = false;
 
       const finishError = (error) => {
-        if (!settled) {
-          settled = true;
-          reject(error);
-        }
+        if (settled) return;
+        settled = true;
+        reject(error);
       };
 
       tx.oncomplete = () => {
-        if (!settled) {
-          settled = true;
-          if (deletedCount > 0) {
-            console.log(`[DB] Deleted ${deletedCount} ${storeName} record(s) for conversation: ${conversationId}`);
-          }
-          resolve(deletedCount);
+        if (settled) return;
+        settled = true;
+        if (deletedCount > 0) {
+          console.log(`[DB] Deleted ${deletedCount} ${storeName} record(s) for conversation: ${conversationId}`);
         }
+        resolve(deletedCount);
       };
-
       tx.onerror = () => finishError(tx.error || new Error(`Failed to delete ${storeName} records`));
       tx.onabort = () => finishError(tx.error || new Error(`Aborted deleting ${storeName} records`));
 
       const request = index.openCursor(IDBKeyRange.only(conversationId));
       request.onsuccess = (event) => {
         const cursor = event.target.result;
-        if (!cursor) {
-          return;
-        }
-
+        if (!cursor) return;
         store.delete(cursor.primaryKey);
-        deletedCount++;
+        deletedCount += 1;
         cursor.continue();
       };
-
       request.onerror = () => finishError(request.error);
     });
   }
 
-  /**
-   * 获取对话
-   * @param {string} id - 对话 ID
-   * @returns {Promise<Object|null>}
-   */
   async getConversation(id) {
     const db = await this.open();
     const tx = db.transaction('conversations', 'readonly');
@@ -270,195 +220,97 @@ export class Database {
 
     return new Promise((resolve, reject) => {
       const request = store.get(id);
-
-      request.onsuccess = () => {
-        resolve(request.result || null);
-      };
-
-      request.onerror = () => {
-        reject(request.error);
-      };
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
     });
   }
 
-  /**
-   * 批量保存节点
-   * @param {Array} nodes - 节点数组
-   * @returns {Promise<void>}
-   */
   async saveNodes(nodes) {
     const db = await this.open();
-    const tx = db.transaction('nodes', 'readwrite');
-    const store = tx.objectStore('nodes');
-
-    const promises = nodes.map(node => {
-      return new Promise((resolve, reject) => {
-        const request = store.put(node);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-
-    await Promise.all(promises);
+    const store = db.transaction('nodes', 'readwrite').objectStore('nodes');
+    await Promise.all(nodes.map(node => new Promise((resolve, reject) => {
+      const request = store.put(node);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    })));
     console.log(`[DB] Saved ${nodes.length} nodes`);
   }
 
-  /**
-   * 获取对话的所有节点
-   * @param {string} conversationId - 对话 ID
-   * @returns {Promise<Array>}
-   */
   async getNodes(conversationId) {
     const db = await this.open();
-    const tx = db.transaction('nodes', 'readonly');
-    const store = tx.objectStore('nodes');
-    const index = store.index('conversationId');
-
+    const index = db.transaction('nodes', 'readonly').objectStore('nodes').index('conversationId');
     return new Promise((resolve, reject) => {
       const request = index.getAll(conversationId);
-
-      request.onsuccess = () => {
-        resolve(request.result || []);
-      };
-
-      request.onerror = () => {
-        reject(request.error);
-      };
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
     });
   }
 
-  /**
-   * 批量保存边
-   * @param {Array} edges - 边数组
-   * @returns {Promise<void>}
-   */
   async saveEdges(edges) {
     const db = await this.open();
-    const tx = db.transaction('edges', 'readwrite');
-    const store = tx.objectStore('edges');
-
-    const promises = edges.map(edge => {
-      return new Promise((resolve, reject) => {
-        const request = store.put(edge);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-
-    await Promise.all(promises);
+    const store = db.transaction('edges', 'readwrite').objectStore('edges');
+    await Promise.all(edges.map(edge => new Promise((resolve, reject) => {
+      const request = store.put(edge);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    })));
     console.log(`[DB] Saved ${edges.length} edges`);
   }
 
-  /**
-   * 获取对话的所有边
-   * @param {string} conversationId - 对话 ID
-   * @returns {Promise<Array>}
-   */
   async getEdges(conversationId) {
     const db = await this.open();
-    const tx = db.transaction('edges', 'readonly');
-    const store = tx.objectStore('edges');
-    const index = store.index('conversationId');
-
+    const index = db.transaction('edges', 'readonly').objectStore('edges').index('conversationId');
     return new Promise((resolve, reject) => {
       const request = index.getAll(conversationId);
-
       request.onsuccess = () => {
-        // 按 orderKey 排序
         const edges = request.result || [];
         edges.sort((a, b) => (a.orderKey || 0) - (b.orderKey || 0));
         resolve(edges);
       };
-
-      request.onerror = () => {
-        reject(request.error);
-      };
+      request.onerror = () => reject(request.error);
     });
   }
 
-  /**
-   * 获取对话的所有轮次
-   * @param {string} conversationId - 对话 ID
-   * @returns {Promise<Array>}
-   */
   async getRounds(conversationId) {
     const db = await this.open();
-    const tx = db.transaction('rounds', 'readonly');
-    const store = tx.objectStore('rounds');
-    const index = store.index('conversationId');
-
+    const index = db.transaction('rounds', 'readonly').objectStore('rounds').index('conversationId');
     return new Promise((resolve, reject) => {
       const request = index.getAll(conversationId);
-
-      request.onsuccess = () => {
-        resolve(request.result || []);
-      };
-
-      request.onerror = () => {
-        reject(request.error);
-      };
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
     });
   }
 
-  /**
-   * 批量保存轮次
-   * @param {Array} rounds - 轮次数组
-   * @returns {Promise<void>}
-   */
   async saveRounds(rounds) {
     const db = await this.open();
-    const tx = db.transaction('rounds', 'readwrite');
-    const store = tx.objectStore('rounds');
-
-    const promises = rounds.map(round => {
-      return new Promise((resolve, reject) => {
-        const request = store.put(round);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-
-    await Promise.all(promises);
+    const store = db.transaction('rounds', 'readwrite').objectStore('rounds');
+    await Promise.all(rounds.map(round => new Promise((resolve, reject) => {
+      const request = store.put(round);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    })));
     console.log(`[DB] Saved ${rounds.length} rounds`);
   }
 
-  /**
-   * 批量保存分支
-   * @param {Array} branches - 分支数组
-   * @returns {Promise<void>}
-   */
   async saveBranches(branches) {
     const db = await this.open();
-    const tx = db.transaction('branches', 'readwrite');
-    const store = tx.objectStore('branches');
-
-    // 为每个分支添加 conversationId（从 path 中获取）
-    const branchesWithConvId = branches.map(branch => ({
+    const store = db.transaction('branches', 'readwrite').objectStore('branches');
+    const withConversationId = branches.map(branch => ({
       ...branch,
       conversationId: branch.path[0]?.conversationId || 'unknown'
     }));
 
-    const promises = branchesWithConvId.map(branch => {
-      return new Promise((resolve, reject) => {
-        const request = store.put(branch);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-
-    await Promise.all(promises);
+    await Promise.all(withConversationId.map(branch => new Promise((resolve, reject) => {
+      const request = store.put(branch);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    })));
     console.log(`[DB] Saved ${branches.length} branches`);
   }
 
-  /**
-   * 保存完整对话数据
-   * @param {Object} conversationData - 完整对话数据
-   * @returns {Promise<void>}
-   */
   async saveFullConversation(conversationData) {
     console.log(`[DB] Saving full conversation: ${conversationData.id}`);
 
-    // 保存对话基本信息
     await this.saveConversation({
       id: conversationData.id,
       title: conversationData.title,
@@ -480,33 +332,16 @@ export class Database {
     console.log(`[DB] ✓ Full conversation saved: ${conversationData.id}`);
   }
 
-  /**
-   * 获取所有对话列表
-   * @returns {Promise<Array>}
-   */
   async getAllConversations() {
     const db = await this.open();
-    const tx = db.transaction('conversations', 'readonly');
-    const store = tx.objectStore('conversations');
-
+    const store = db.transaction('conversations', 'readonly').objectStore('conversations');
     return new Promise((resolve, reject) => {
       const request = store.getAll();
-
-      request.onsuccess = () => {
-        resolve(request.result || []);
-      };
-
-      request.onerror = () => {
-        reject(request.error);
-      };
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
     });
   }
 
-  /**
-   * 删除对话及其相关数据
-   * @param {string} conversationId - 对话 ID
-   * @returns {Promise<void>}
-   */
   async deleteConversation(conversationId) {
     const db = await this.open();
 
@@ -517,10 +352,9 @@ export class Database {
       branches: []
     });
 
-    // 删除对话
-    const tx1 = db.transaction('conversations', 'readwrite');
+    const tx = db.transaction('conversations', 'readwrite');
     await new Promise((resolve, reject) => {
-      const request = tx1.objectStore('conversations').delete(conversationId);
+      const request = tx.objectStore('conversations').delete(conversationId);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
@@ -528,17 +362,12 @@ export class Database {
     console.log(`[DB] Conversation deleted: ${conversationId}`);
   }
 
-  /**
-   * 关闭数据库
-   */
   close() {
-    if (this.db) {
-      this.db.close();
-      this.db = null;
-      console.log('[DB] Database closed');
-    }
+    if (!this.db) return;
+    this.db.close();
+    this.db = null;
+    console.log('[DB] Database closed');
   }
 }
 
-// 导出单例实例
 export const db = new Database();
