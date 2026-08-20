@@ -1,0 +1,112 @@
+CI diagnostic for 73013e2267728523deedcd1cea5d787a628b00e4
+
+== npm ci ==
+exit_code=0
+npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
+npm warn deprecated @humanwhocodes/config-array@0.13.0: Use @eslint/config-array instead
+npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported
+npm warn deprecated glob@7.2.3: Glob versions prior to v9 are no longer supported
+npm warn deprecated @humanwhocodes/object-schema@2.0.3: Use @eslint/object-schema instead
+npm warn deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+
+added 200 packages, and audited 201 packages in 2s
+
+42 packages are looking for funding
+  run `npm fund` for details
+
+7 vulnerabilities (2 moderate, 5 high)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+== english check ==
+exit_code=0
+English-only source/documentation check passed.
+
+== compat test ==
+exit_code=0
+edit-pagination compatibility tests passed
+
+== layout test ==
+exit_code=0
+Stable answer reveal layout checks passed.
+
+== release build ==
+exit_code=1
+
+> chatgpt-graph-extension@0.6.0 release
+> node scripts/release.js
+
+
+📦 Building release v0.6.0...
+
+1. Building production bundles...
+
+> chatgpt-graph-extension@0.6.0 build:release
+> node build.js --release
+
+
+  dist/graph-ux.css  1.6kb
+
+⚡ Done in 5ms
+
+  dist/docked-panel-theme.css  2.2kb
+
+⚡ Done in 14ms
+
+  dist/chatgpt-theme.css  12.5kb
+
+⚡ Done in 11ms
+
+  dist/edit-pagination-compat.js  2.8kb
+
+⚡ Done in 28ms
+
+  dist/sidepanel.css  34.6kb
+
+⚡ Done in 15ms
+
+  dist/setup.js  2.8kb
+
+⚡ Done in 22ms
+
+  dist/popup.js  14.4kb
+
+⚡ Done in 29ms
+
+  dist/docked-panel.js  11.3kb
+
+⚡ Done in 44ms
+
+  dist/background.js  13.9kb
+
+⚡ Done in 47ms
+✘ [ERROR] No matching export in "src/shared/constants.js" for import "DOM_SELECTORS"
+
+    src/content/collapse/collapse-manager.js:8:2:
+      8 │   DOM_SELECTORS
+        ╵   ~~~~~~~~~~~~~
+
+1 error
+× Build failed: Error: Build failed with 1 error:
+src/content/collapse/collapse-manager.js:8:2: ERROR: No matching export in "src/shared/constants.js" for import "DOM_SELECTORS"
+    at failureErrorWithLog (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:1651:15)
+    at /home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:1059:25
+    at runOnEndCallbacks (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:1486:45)
+    at buildResponseToResult (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:1057:7)
+    at /home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:1086:16
+    at responseCallbacks.<computed> (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:704:9)
+    at handleIncomingPacket (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:764:9)
+    at Socket.readFromStdout (/home/runner/work/chatgpt-graph-navigator/chatgpt-graph-navigator/node_modules/esbuild/lib/main.js:680:7)
+    at Socket.emit (node:events:524:28)
+    at addChunk (node:internal/streams/readable:561:12) {
+  errors: [Getter/Setter],
+  warnings: [Getter/Setter]
+}
+× Build failed
+
