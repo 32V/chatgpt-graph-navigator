@@ -1,0 +1,56 @@
+name: Build installable extension
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ready-to-load Chrome extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production extension
+        run: npm run release
+
+      - name: Verify packaged extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f release/manifest.json
+          test -f release/dist/content.js
+          test -f release/dist/background.js
+          test -f release/dist/sidepanel.js
+          test -f release/src/popup/index.html
+          test -f release/src/sidepanel/index.html
+          node -e "JSON.parse(require('fs').readFileSync('release/manifest.json', 'utf8')); console.log('manifest.json is valid JSON')"
+
+      - name: Upload ready-to-load extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatgpt-graph-extension-${{ github.run_number }}-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
