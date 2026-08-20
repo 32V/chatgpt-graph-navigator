@@ -1,17 +1,13 @@
 /**
- * IndexedDB Schema 定义
+ * IndexedDB schema definition.
  */
 
 export const DB_NAME = 'ChatGPTGraphDB';
 // Keep the hotfix branch forward-compatible with the backup feature branch.
 // The browser may already contain a v5 database with the backup store.
-export const DB_VERSION = 5;  // v5: add conversation_backups store
+export const DB_VERSION = 5;
 
-/**
- * 对象存储定义
- */
 export const OBJECT_STORES = {
-  // 对话表
   conversations: {
     keyPath: 'id',
     indexes: [
@@ -20,7 +16,6 @@ export const OBJECT_STORES = {
     ]
   },
 
-  // 节点表
   nodes: {
     keyPath: 'id',
     indexes: [
@@ -30,9 +25,9 @@ export const OBJECT_STORES = {
     ]
   },
 
-  // 边表（节点之间的父子关系）
+  // Parent/child relationships between parsed nodes.
   edges: {
-    keyPath: 'id',  // 格式: ${conversationId}:${source}->${target}
+    keyPath: 'id',
     indexes: [
       { name: 'conversationId', keyPath: 'conversationId', unique: false },
       { name: 'source', keyPath: 'source', unique: false },
@@ -41,7 +36,6 @@ export const OBJECT_STORES = {
     ]
   },
 
-  // 轮次表
   rounds: {
     keyPath: 'id',
     indexes: [
@@ -50,7 +44,6 @@ export const OBJECT_STORES = {
     ]
   },
 
-  // 分支表
   branches: {
     keyPath: 'id',
     indexes: [
@@ -58,7 +51,7 @@ export const OBJECT_STORES = {
     ]
   },
 
-  // 对话备份表（存储原始 API JSON）
+  // Raw API snapshots used by the optional backup path.
   conversation_backups: {
     keyPath: 'conversation_id',
     indexes: [
@@ -71,42 +64,36 @@ export const OBJECT_STORES = {
 };
 
 /**
- * 创建或升级数据库
- * @param {IDBDatabase} db - 数据库实例
- * @param {IDBVersionChangeEvent} event - 版本变更事件
+ * Create any object stores that are missing during an IndexedDB upgrade.
  */
 export function upgradeDatabase(db, event) {
   const oldVersion = event.oldVersion;
   const newVersion = event.newVersion;
 
   console.log(`[DB] Upgrading database from v${oldVersion} to v${newVersion}`);
-  console.log(`[DB] Existing object stores:`, Array.from(db.objectStoreNames));
+  console.log('[DB] Existing object stores:', Array.from(db.objectStoreNames));
 
   try {
-    // 创建对象存储
     for (const [storeName, config] of Object.entries(OBJECT_STORES)) {
-      if (!db.objectStoreNames.contains(storeName)) {
-        console.log(`[DB] Creating object store: ${storeName}`);
-
-        const store = db.createObjectStore(storeName, { keyPath: config.keyPath });
-
-        // 创建索引
-        if (config.indexes) {
-          for (const index of config.indexes) {
-            console.log(`[DB]   Creating index: ${index.name}`);
-            store.createIndex(index.name, index.keyPath, { unique: index.unique });
-          }
-        }
-
-        console.log(`[DB] ✓ Created object store: ${storeName}`);
-      } else {
+      if (db.objectStoreNames.contains(storeName)) {
         console.log(`[DB] Object store already exists: ${storeName}`);
+        continue;
       }
+
+      console.log(`[DB] Creating object store: ${storeName}`);
+      const store = db.createObjectStore(storeName, { keyPath: config.keyPath });
+
+      for (const index of config.indexes || []) {
+        console.log(`[DB]   Creating index: ${index.name}`);
+        store.createIndex(index.name, index.keyPath, { unique: index.unique });
+      }
+
+      console.log(`[DB] ✓ Created object store: ${storeName}`);
     }
 
-    console.log(`[DB] ✓ Database upgrade completed`);
+    console.log('[DB] ✓ Database upgrade completed');
   } catch (error) {
-    console.error(`[DB] Error during database upgrade:`, error);
+    console.error('[DB] Error during database upgrade:', error);
     throw error;
   }
 }
