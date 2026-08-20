@@ -170,7 +170,7 @@ async function handleIncrementalUpdate(updateData) {
 /**
  * 处理获取对话请求
  * @param {Object} payload - 请求数据
- * @returns {Promise<Object>}
+ * @returns {Promise<Object|null>}
  */
 async function handleGetConversation(payload) {
   const { conversationId } = payload;
@@ -179,8 +179,13 @@ async function handleGetConversation(payload) {
 
   const conversation = await db.getConversation(conversationId);
 
+  // The side panel can ask for the active conversation before the content
+  // script has finished writing its first canonical snapshot. That is an
+  // expected cache miss, not a background failure. Returning null lets the
+  // caller trigger the normal content refresh path without creating a Chrome
+  // extension error entry.
   if (!conversation) {
-    throw new Error(`Conversation not found: ${conversationId}`);
+    return null;
   }
 
   // 获取相关数据（包括 edges）
