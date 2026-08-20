@@ -1,1 +1,1 @@
-Pending automated scan.
+scripts/strip-han-comments.mjs:100: next = next.replace('|\u{4e0a}\u{4e00}', '').replace('|\u{4e0b}\u{4e00}', '');
