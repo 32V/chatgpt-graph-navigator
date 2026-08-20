@@ -31,6 +31,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test edit-pagination compatibility
+        run: node scripts/test-edit-pagination-compat.mjs
+
       - name: Build production extension
         run: npm run release
 
@@ -39,6 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f release/manifest.json
+          test -f release/dist/edit-pagination-compat.js
           test -f release/dist/content.js
           test -f release/dist/background.js
           test -f release/dist/sidepanel.js
