@@ -1,0 +1,228 @@
+/* ChatGPT-aligned theme layer for the embedded graph UI. */
+:root {
+  --cg-bg: rgb(255, 255, 255);
+  --cg-text: rgb(13, 13, 13);
+  --cg-surface-1: color-mix(in srgb, var(--cg-bg) 96%, var(--cg-text) 4%);
+  --cg-surface-2: color-mix(in srgb, var(--cg-bg) 91%, var(--cg-text) 9%);
+  --cg-border: color-mix(in srgb, var(--cg-text) 12%, transparent);
+  --cg-border-strong: color-mix(in srgb, var(--cg-text) 20%, transparent);
+  --cg-muted: color-mix(in srgb, var(--cg-text) 62%, var(--cg-bg) 38%);
+  --cg-hover: color-mix(in srgb, var(--cg-text) 7%, transparent);
+  --cg-selected: color-mix(in srgb, var(--cg-text) 11%, transparent);
+  --cg-shadow: rgba(0, 0, 0, 0.10);
+  color-scheme: light;
+}
+
+html[data-cg-theme="dark"] {
+  --cg-shadow: rgba(0, 0, 0, 0.28);
+  color-scheme: dark;
+}
+
+html,
+body,
+#root,
+.app,
+.main-content,
+.graph-container,
+.react-flow,
+.react-flow__renderer,
+.react-flow__pane {
+  background: var(--cg-bg) !important;
+  color: var(--cg-text) !important;
+}
+
+body {
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+
+.header,
+.git-toolbar,
+.git-toolbar-row1,
+.git-toolbar-row2,
+.cg-graph-toolbar,
+.react-flow__controls,
+.react-flow__minimap {
+  background: var(--cg-bg) !important;
+  color: var(--cg-text) !important;
+  border-color: var(--cg-border) !important;
+  box-shadow: none !important;
+}
+
+.view-toggle,
+.header-stats,
+.git-filter-group,
+.git-font-control,
+.git-search,
+.cg-graph-toolbar {
+  background: var(--cg-surface-1) !important;
+  border-color: var(--cg-border) !important;
+}
+
+.view-toggle-btn,
+.icon-btn,
+.minimap-btn,
+.refresh-btn,
+.git-collapse-btn,
+.git-filter-btn,
+.cg-toolbar-btn,
+.expand-btn,
+.react-flow__controls-button {
+  background: transparent !important;
+  color: var(--cg-text) !important;
+  border-color: var(--cg-border) !important;
+  box-shadow: none !important;
+}
+
+.view-toggle-btn:hover,
+.icon-btn:hover,
+.minimap-btn:hover,
+.refresh-btn:hover,
+.git-collapse-btn:hover,
+.git-filter-btn:hover,
+.cg-toolbar-btn:hover,
+.expand-btn:hover,
+.react-flow__controls-button:hover {
+  background: var(--cg-hover) !important;
+}
+
+.view-toggle-btn.active,
+.icon-btn.active,
+.minimap-btn.active,
+.git-filter-btn.active,
+.cg-toolbar-btn.active {
+  background: var(--cg-selected) !important;
+  border-color: var(--cg-border-strong) !important;
+  box-shadow: none !important;
+}
+
+.header-title,
+.node-round-number,
+.message-text,
+.git-node,
+.git-node-title,
+.git-node-text,
+.git-q-title,
+.git-a-title,
+.git-q-text,
+.git-a-text,
+.git-answer-preview,
+.git-answer-text,
+.git-search-input,
+input,
+button {
+  color: var(--cg-text) !important;
+}
+
+.header-subtitle,
+.header-stats,
+.node-collapsed,
+.empty-state,
+.git-muted,
+.git-meta,
+.git-node-meta,
+.git-answer-preview,
+.git-toolbar-label {
+  color: var(--cg-muted) !important;
+}
+
+.round-node,
+.message,
+.git-node,
+.git-q-node,
+.git-a-node,
+.git-answer-preview,
+.git-card,
+.git-row,
+.git-search input,
+input[type="search"],
+input[type="text"] {
+  background: var(--cg-bg) !important;
+  color: var(--cg-text) !important;
+  border-color: var(--cg-border) !important;
+  box-shadow: none !important;
+}
+
+.round-node:hover,
+.git-node:hover,
+.git-q-node:hover,
+.git-a-node:hover,
+.git-row:hover {
+  background: var(--cg-hover) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.round-node.selected,
+.git-node.selected,
+.git-q-node.selected,
+.git-a-node.selected,
+.git-selected,
+.git-current {
+  background: var(--cg-selected) !important;
+  border-color: var(--cg-border-strong) !important;
+  box-shadow: none !important;
+}
+
+.user-message,
+.assistant-message {
+  background: var(--cg-surface-1) !important;
+}
+
+.node-header,
+.git-toolbar,
+.git-toolbar-row1,
+.git-toolbar-row2,
+.git-node,
+.git-row {
+  border-color: var(--cg-border) !important;
+}
+
+.git-mark,
+mark {
+  background: var(--cg-surface-2) !important;
+  color: var(--cg-text) !important;
+}
+
+.branch-indicator {
+  background: var(--cg-surface-2) !important;
+  color: var(--cg-text) !important;
+  box-shadow: none !important;
+}
+
+.react-flow__controls-button svg,
+.toolbar-icon,
+.git-toolbar img {
+  filter: none;
+}
+
+html[data-cg-theme="dark"] .toolbar-icon,
+html[data-cg-theme="dark"] .git-toolbar img,
+html[data-cg-theme="dark"] .react-flow__controls-button svg {
+  filter: invert(1);
+}
+
+.react-flow__edge-path {
+  stroke: var(--cg-border-strong) !important;
+}
+
+.react-flow__handle {
+  background: var(--cg-text) !important;
+  border-color: var(--cg-bg) !important;
+  box-shadow: none !important;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--cg-text) 22%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

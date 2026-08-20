@@ -6,27 +6,57 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import { STORAGE_KEYS } from '../shared/constants';
 
-// 获取根元素
 const container = document.getElementById('root');
 const root = createRoot(container);
 
-// If rendered inside the floating panel iframe, tighten spacing a bit
-try {
-  const params = new URLSearchParams(window.location.search);
-  if (params.has('embedded')) {
-    document.documentElement.classList.add('embedded');
+const IS_EMBEDDED = (() => {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('embedded')) {
+      document.documentElement.classList.add('embedded');
+      const initialTheme = params.get('theme');
+      if (initialTheme === 'dark' || initialTheme === 'light') {
+        document.documentElement.dataset.cgTheme = initialTheme;
+      }
+      return true;
+    }
+  } catch {
+    // ignore
   }
-} catch {
-  // ignore
+  return false;
+})();
+
+function applyHostTheme(payload = {}) {
+  const mode = payload.mode === 'dark' ? 'dark' : 'light';
+  const background = String(payload.background || '').trim();
+  const foreground = String(payload.foreground || '').trim();
+
+  document.documentElement.dataset.cgTheme = mode;
+  if (background) document.documentElement.style.setProperty('--cg-bg', background);
+  if (foreground) document.documentElement.style.setProperty('--cg-text', foreground);
+}
+
+if (IS_EMBEDDED) {
+  window.addEventListener('message', (event) => {
+    if (event.source !== window.parent) return;
+    if (event?.data?.type === 'CG_THEME') {
+      applyHostTheme(event.data.payload || {});
+    }
+  });
+
+  try {
+    window.parent?.postMessage({ type: 'CG_THEME_REQUEST' }, '*');
+  } catch {
+    // ignore
+  }
 }
 
 /**
  * Apply sidepanel UI zoom (CSS zoom). This is independent from webpage zoom.
- * Note: we intentionally do NOT apply this in embedded mode (floating panel iframe).
+ * Embedded mode follows the ChatGPT dock size directly, so zoom is not applied.
  */
 (() => {
-  const isEmbedded = document.documentElement.classList.contains('embedded');
-  if (isEmbedded) return;
+  if (IS_EMBEDDED) return;
 
   const clampZoom = (v) => {
     const z = Number(v);
@@ -35,12 +65,9 @@ try {
   };
 
   const applyZoom = (z) => {
-    const zoom = clampZoom(z);
-    // 'zoom' is supported in Chromium and reflows layout naturally.
-    document.documentElement.style.zoom = String(zoom);
+    document.documentElement.style.zoom = String(clampZoom(z));
   };
 
-  // Initial load
   try {
     chrome.storage.local.get(STORAGE_KEYS.SIDEPANEL_UI_ZOOM).then((res) => {
       applyZoom(res?.[STORAGE_KEYS.SIDEPANEL_UI_ZOOM] ?? 1);
@@ -49,7 +76,6 @@ try {
     // ignore
   }
 
-  // Live updates
   try {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local') return;
@@ -61,7 +87,6 @@ try {
   }
 })();
 
-// 渲染应用
 root.render(
   <React.StrictMode>
     <App />

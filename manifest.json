@@ -10,7 +10,6 @@
     "128": "assets/icon128.png"
   },
   "action": {
-    "default_popup": "src/popup/index.html",
     "default_icon": {
       "16": "assets/icon16.png",
       "48": "assets/icon48.png",
@@ -50,23 +49,28 @@
         "https://chat.openai.com/*"
       ],
       "js": [
+        "dist/docked-panel.js",
         "dist/content.js"
       ],
       "run_at": "document_idle"
     }
   ],
-  "side_panel": {
-    "default_path": "src/sidepanel/index.html"
-  },
   "web_accessible_resources": [
     {
       "resources": [
         "assets/*",
         "src/sidepanel/index.html",
         "dist/sidepanel.js",
-        "dist/sidepanel.css"
+        "dist/sidepanel.css",
+        "dist/chatgpt-theme.css"
       ],
-      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"]
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ]
     }
-  ]
+  ],
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  }
 }

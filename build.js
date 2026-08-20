@@ -9,7 +9,6 @@ const isWatch = process.argv.includes('--watch');
 const isRelease = process.argv.includes('--release');
 const isDev = isWatch && !isRelease;
 
-// 插件：Release 模式下移除调试日志，保留 error 和 warn
 const stripDebugLogsPlugin = {
   name: 'strip-debug-logs',
   setup(build) {
@@ -18,9 +17,6 @@ const stripDebugLogsPlugin = {
     build.onLoad({ filter: /\.jsx?$/ }, async (args) => {
       const fs = await import('fs');
       let contents = await fs.promises.readFile(args.path, 'utf8');
-
-      // 移除 console.log, console.debug, console.info（保留 error, warn）
-      // 匹配 console.log(...) 包括多行和嵌套括号
       contents = contents.replace(/console\.(log|debug|info)\s*\([^;]*\);?/g, '');
 
       return {
@@ -45,59 +41,60 @@ const commonOptions = {
   logLevel: 'info'
 };
 
-// React 相关配置
 const reactOptions = {
   ...commonOptions,
   loader: {
     '.js': 'jsx',
     '.jsx': 'jsx'
   },
-  jsx: 'automatic',  // 使用 React 17+ 的 자동 JSX 运行时
+  jsx: 'automatic',
 };
 
 const builds = [
-  // Early MAIN-world compatibility script. It must be a standalone bundle so
-  // manifest.json can inject it at document_start before ChatGPT bootstraps.
   {
     ...commonOptions,
     entryPoints: ['src/content/compat/edit-pagination-compat.js'],
     outfile: 'dist/edit-pagination-compat.js'
   },
-  // Content Script (不需要 React)
+  {
+    ...commonOptions,
+    entryPoints: ['src/content/ui/docked-panel.js'],
+    outfile: 'dist/docked-panel.js'
+  },
   {
     ...commonOptions,
     entryPoints: ['src/content/index.js'],
     outfile: 'dist/content.js'
   },
-  // Background Script (不需要 React)
   {
     ...commonOptions,
     entryPoints: ['src/background/index.js'],
     outfile: 'dist/background.js'
   },
-  // Popup (不需要 React)
   {
     ...commonOptions,
     entryPoints: ['src/popup/popup.js'],
     outfile: 'dist/popup.js'
   },
-  // Setup Page (不需要 React)
   {
     ...commonOptions,
     entryPoints: ['src/setup/setup.js'],
     outfile: 'dist/setup.js'
   },
-  // Side Panel (使用 React)
   {
     ...reactOptions,
     entryPoints: ['src/sidepanel/index.jsx'],
     outfile: 'dist/sidepanel.js'
   },
-  // Side Panel CSS
   {
     ...commonOptions,
     entryPoints: ['src/sidepanel/styles/index.css'],
     outfile: 'dist/sidepanel.css'
+  },
+  {
+    ...commonOptions,
+    entryPoints: ['src/sidepanel/chatgpt-theme.css'],
+    outfile: 'dist/chatgpt-theme.css'
   }
 ];
 
@@ -105,17 +102,12 @@ async function build() {
   try {
     if (isWatch) {
       console.log('Watching for changes...');
-      const contexts = await Promise.all(
-        builds.map(options => esbuild.context(options))
-      );
+      const contexts = await Promise.all(builds.map(options => esbuild.context(options)));
       await Promise.all(contexts.map(ctx => ctx.watch()));
     } else {
       await Promise.all(builds.map(options => esbuild.build(options)));
-      if (isRelease) {
-        console.log('√ Release build completed! (debug logs removed, minified)');
-      } else {
-        console.log('√ Build completed!');
-      }
+      if (isRelease) console.log('√ Release build completed! (debug logs removed, minified)');
+      else console.log('√ Build completed!');
     }
   } catch (error) {
     console.error('× Build failed:', error);
