@@ -1,7 +1,10 @@
 import dagre from 'dagre';
 
-const NODE_WIDTH = 216;
-const NODE_HEIGHT = 86;
+export const GRAPH_NODE_WIDTH = 216;
+export const GRAPH_NODE_HEIGHT = 86;
+export const INLINE_ANSWER_WIDTH = 190;
+export const INLINE_ANSWER_HEIGHT = 42;
+
 const START_NODE_WIDTH = 92;
 const START_NODE_HEIGHT = 34;
 
@@ -10,7 +13,7 @@ function flowNodeMessageId(flowNodeId) {
   return flowNodeId.replace(/^[qa]-/, '');
 }
 
-function makeEdge(source, target, selectedPath) {
+function makeEdge(source, target, selectedPath, extraClass = '') {
   const sourceMessageId = flowNodeMessageId(source);
   const targetMessageId = flowNodeMessageId(target);
   const onPath = Boolean(
@@ -25,10 +28,46 @@ function makeEdge(source, target, selectedPath) {
     target,
     type: 'smoothstep',
     animated: false,
-    className: onPath ? 'cg-edge cg-edge-on-path' : 'cg-edge'
+    className: [
+      'cg-edge',
+      onPath ? 'cg-edge-on-path' : '',
+      extraClass
+    ].filter(Boolean).join(' ')
   };
 }
 
+function findQuestionNode(qaTree, questionId) {
+  const indexed = qaTree?.qNodeMap?.get?.(questionId);
+  if (indexed) return indexed;
+
+  const visited = new Set();
+  const walk = (question) => {
+    if (!question || visited.has(question.userId)) return null;
+    visited.add(question.userId);
+    if (question.userId === questionId) return question;
+
+    for (const answer of question.answers || []) {
+      for (const child of answer.nextQuestions || []) {
+        const match = walk(child);
+        if (match) return match;
+      }
+    }
+    return null;
+  };
+
+  for (const rootQuestion of qaTree?.root?.questions || []) {
+    const match = walk(rootQuestion);
+    if (match) return match;
+  }
+  return null;
+}
+
+/**
+ * Build the stable/base graph. Single-answer assistant turns stay collapsed here
+ * regardless of UI expansion state. This makes Dagre positions independent from
+ * reveal/hide operations; expanded assistant nodes are inserted afterwards into
+ * the already-reserved inter-rank gap.
+ */
 export function buildFlowFromQATree(qaTree, selectedPath = new Set(), expandedQNodes = new Set()) {
   if (!qaTree || !qaTree.root || qaTree.root.questions.length === 0) {
     return { nodes: [], edges: [] };
@@ -51,8 +90,6 @@ export function buildFlowFromQATree(qaTree, selectedPath = new Set(), expandedQN
     const isSelected = selectedPath.has(qNode.userId);
     const flowNodeId = `q-${qNode.userId}`;
     const hasSingleAnswer = qNode.answers.length === 1;
-    const isExpanded = expandedQNodes.has(qNode.userId);
-    const shouldCollapseAnswer = hasSingleAnswer && !isExpanded;
     const collapsedAnswer = hasSingleAnswer ? qNode.answers[0] : null;
 
     flowNodes.push({
@@ -73,7 +110,7 @@ export function buildFlowFromQATree(qaTree, selectedPath = new Set(), expandedQN
           preview: collapsedAnswer.preview
         } : null,
         canExpand: hasSingleAnswer,
-        isExpanded
+        isExpanded: hasSingleAnswer && expandedQNodes.has(qNode.userId)
       },
       position: { x: 0, y: 0 }
     });
@@ -82,15 +119,18 @@ export function buildFlowFromQATree(qaTree, selectedPath = new Set(), expandedQN
       flowEdges.push(makeEdge(parentFlowNodeId, flowNodeId, selectedPath));
     }
 
-    if (shouldCollapseAnswer) {
+    if (hasSingleAnswer) {
+      // Keep the base topology compact and stable. The assistant preview node is
+      // inserted after Dagre layout when the user asks to reveal it.
       const answer = qNode.answers[0];
       for (const nextQNode of answer.nextQuestions) {
         processQNode(nextQNode, flowNodeId);
       }
-    } else {
-      for (const answer of qNode.answers) {
-        processANode(answer, flowNodeId);
-      }
+      return;
+    }
+
+    for (const answer of qNode.answers) {
+      processANode(answer, flowNodeId);
     }
   }
 
@@ -144,8 +184,8 @@ export function applyDagreLayout(nodes, edges, direction = 'TB') {
   nodes.forEach((node) => {
     const isStartNode = node.data?.nodeType === 'start';
     graph.setNode(node.id, {
-      width: isStartNode ? START_NODE_WIDTH : NODE_WIDTH,
-      height: isStartNode ? START_NODE_HEIGHT : NODE_HEIGHT
+      width: isStartNode ? START_NODE_WIDTH : GRAPH_NODE_WIDTH,
+      height: isStartNode ? START_NODE_HEIGHT : GRAPH_NODE_HEIGHT
     });
   });
 
@@ -155,8 +195,8 @@ export function applyDagreLayout(nodes, edges, direction = 'TB') {
   const layoutedNodes = nodes.map((node) => {
     const position = graph.node(node.id);
     const isStartNode = node.data?.nodeType === 'start';
-    const width = isStartNode ? START_NODE_WIDTH : NODE_WIDTH;
-    const height = isStartNode ? START_NODE_HEIGHT : NODE_HEIGHT;
+    const width = isStartNode ? START_NODE_WIDTH : GRAPH_NODE_WIDTH;
+    const height = isStartNode ? START_NODE_HEIGHT : GRAPH_NODE_HEIGHT;
 
     return {
       ...node,
@@ -170,7 +210,80 @@ export function applyDagreLayout(nodes, edges, direction = 'TB') {
   return { nodes: layoutedNodes, edges };
 }
 
+function injectExpandedSingleAnswers(layoutedNodes, layoutedEdges, qaTree, selectedPath, expandedQNodes) {
+  if (!expandedQNodes?.size) return { nodes: layoutedNodes, edges: layoutedEdges };
+
+  const nodes = [...layoutedNodes];
+  let edges = [...layoutedEdges];
+  const nodeById = new Map(nodes.map(node => [node.id, node]));
+
+  for (const questionId of expandedQNodes) {
+    const qNode = findQuestionNode(qaTree, questionId);
+    if (!qNode || qNode.answers?.length !== 1) continue;
+
+    const answer = qNode.answers[0];
+    const questionFlowId = `q-${questionId}`;
+    const answerFlowId = `a-${answer.assistantId}`;
+    const questionFlowNode = nodeById.get(questionFlowId);
+    if (!questionFlowNode || nodeById.has(answerFlowId)) continue;
+
+    const childFlowIds = (answer.nextQuestions || []).map(question => `q-${question.userId}`);
+    const childNodes = childFlowIds.map(id => nodeById.get(id)).filter(Boolean);
+    const questionBottom = questionFlowNode.position.y + GRAPH_NODE_HEIGHT;
+
+    let answerTop;
+    if (childNodes.length > 0) {
+      const nearestChildTop = Math.min(...childNodes.map(node => node.position.y));
+      const gap = nearestChildTop - questionBottom;
+      answerTop = questionBottom + Math.max(4, (gap - INLINE_ANSWER_HEIGHT) / 2);
+    } else {
+      answerTop = questionBottom + 18;
+    }
+
+    const answerNode = {
+      id: answerFlowId,
+      type: 'qaNode',
+      data: {
+        nodeType: 'answer',
+        nodeId: answer.assistantId,
+        content: answer.content,
+        preview: answer.preview,
+        createTime: answer.createTime,
+        isSelected: selectedPath.has(answer.assistantId),
+        childCount: answer.nextQuestions?.length || 0,
+        messageId: answer.assistantId,
+        isInlineExpandedAnswer: true
+      },
+      position: {
+        x: questionFlowNode.position.x + (GRAPH_NODE_WIDTH - INLINE_ANSWER_WIDTH) / 2,
+        y: answerTop
+      }
+    };
+
+    nodes.push(answerNode);
+    nodeById.set(answerFlowId, answerNode);
+
+    const childSet = new Set(childFlowIds);
+    edges = edges.filter(edge => !(edge.source === questionFlowId && childSet.has(edge.target)));
+    edges.push(makeEdge(questionFlowId, answerFlowId, selectedPath, 'cg-edge-inline'));
+    for (const childFlowId of childFlowIds) {
+      if (nodeById.has(childFlowId)) {
+        edges.push(makeEdge(answerFlowId, childFlowId, selectedPath, 'cg-edge-inline'));
+      }
+    }
+  }
+
+  return { nodes, edges };
+}
+
 export function buildAndLayoutQATree(qaTree, selectedPath, direction = 'TB', expandedQNodes = new Set()) {
   const { nodes, edges } = buildFlowFromQATree(qaTree, selectedPath, expandedQNodes);
-  return applyDagreLayout(nodes, edges, direction);
+  const layouted = applyDagreLayout(nodes, edges, direction);
+  return injectExpandedSingleAnswers(
+    layouted.nodes,
+    layouted.edges,
+    qaTree,
+    selectedPath,
+    expandedQNodes
+  );
 }
