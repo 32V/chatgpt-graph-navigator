@@ -125,12 +125,6 @@ export function buildFlowFromQATree(qaTree, selectedPath = new Set(), expandedQN
     processQNode(qNode, hasMultipleRoots ? 'start-node' : null);
   }
 
-  if (hasMultipleRoots) {
-    for (const qNode of qaTree.root.questions) {
-      flowEdges.push(makeEdge('start-node', `q-${qNode.userId}`, selectedPath));
-    }
-  }
-
   return { nodes: flowNodes, edges: flowEdges };
 }
 
