@@ -100,6 +100,11 @@ const builds = [
     ...commonOptions,
     entryPoints: ['src/sidepanel/chatgpt-theme.css'],
     outfile: 'dist/chatgpt-theme.css'
+  },
+  {
+    ...commonOptions,
+    entryPoints: ['src/sidepanel/graph-ux.css'],
+    outfile: 'dist/graph-ux.css'
   }
 ];
 
