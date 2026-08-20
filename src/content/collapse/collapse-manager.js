@@ -4,10 +4,10 @@
 
 import {
   STORAGE_KEYS,
-  DEFAULT_COLLAPSE_SETTINGS,
-  DOM_SELECTORS
+  DEFAULT_COLLAPSE_SETTINGS
 } from '../../shared/constants.js';
 import { log } from '../../shared/utils.js';
+import { TURN_CONTAINER_SELECTOR } from '../utils/message-id-helper.js';
 import { COLLAPSE_STYLES, COLLAPSE_ICON_SVG, EXPAND_ICON_SVG } from './collapse-styles.js';
 
 let settings = { ...DEFAULT_COLLAPSE_SETTINGS };
@@ -135,7 +135,7 @@ function processMessage(container, isSettingsUpdate = false) {
   if (!contentContainer || !buttonContainer) return;
 
   contentContainer.classList.add('chatgpt-graph-collapsible');
-  let isCollapsed = shouldAutoCollapse(messageType);
+  const isCollapsed = shouldAutoCollapse(messageType);
   setCollapseState(contentContainer, isCollapsed);
 
   const button = document.createElement('button');
@@ -179,7 +179,7 @@ function processMessage(container, isSettingsUpdate = false) {
 }
 
 function processAllMessages(isSettingsUpdate = false) {
-  document.querySelectorAll(DOM_SELECTORS.MESSAGE_CONTAINER).forEach((container) => {
+  document.querySelectorAll(TURN_CONTAINER_SELECTOR).forEach((container) => {
     try {
       processMessage(container, isSettingsUpdate);
     } catch (error) {
@@ -197,7 +197,7 @@ function startObserver() {
       mutation.type === 'childList' &&
       Array.from(mutation.addedNodes).some((node) =>
         node.nodeType === Node.ELEMENT_NODE &&
-        (node.matches?.(DOM_SELECTORS.MESSAGE_CONTAINER) || node.querySelector?.(DOM_SELECTORS.MESSAGE_CONTAINER))
+        (node.matches?.(TURN_CONTAINER_SELECTOR) || node.querySelector?.(TURN_CONTAINER_SELECTOR))
       )
     );
 
