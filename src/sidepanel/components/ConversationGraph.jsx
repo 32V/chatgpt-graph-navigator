@@ -61,6 +61,7 @@ function GraphContent({
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [expandedQNodes, setExpandedQNodes] = useState(new Set());
   const prevNodeCountRef = useRef(0);
+  const clickTimerRef = useRef(null);
 
   const [miniMapOffset, setMiniMapOffset] = useState(() => {
     if (IS_EMBEDDED) return { x: 0, y: 0 };
@@ -226,14 +227,26 @@ function GraphContent({
     setCenter(centerX, centerY, { zoom: targetZoom, duration: 260 });
   }, [fitView, getZoom, setCenter]);
 
-  const handleNodeClick = useCallback((_event, node) => {
-    if (node.data?.nodeType === 'start') return;
-    onNodeClick?.(node.data.nodeId, node.data);
+  useEffect(() => () => {
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+  }, []);
+
+  const handleNodeClick = useCallback((event, node) => {
+    if (node.data?.nodeType === 'start' || event.detail > 1) return;
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = null;
+      onNodeClick?.(node.data.nodeId, node.data);
+    }, 170);
   }, [onNodeClick]);
 
   const handleNodeDoubleClick = useCallback((event, node) => {
     event.preventDefault();
     event.stopPropagation();
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
     focusNode(node);
     if (node.data?.nodeType !== 'start') {
       onNodeDoubleClick?.(node.data.nodeId, node.data);
