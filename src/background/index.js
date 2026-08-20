@@ -13,16 +13,12 @@ let actionConfigured = false;
 let servicesInitialized = false;
 let initializePromise = null;
 
-const CHATGPT_CONVERSATION_URL = /^https:\/\/(?:chatgpt\.com|chat\.openai\.com)\/c\/[0-9a-f-]+/i;
-
-function isConversationTab(tab) {
-  return Boolean(tab?.id && CHATGPT_CONVERSATION_URL.test(tab.url || ''));
-}
+const CHATGPT_URL = /^https:\/\/(?:chatgpt\.com|chat\.openai\.com)\//i;
 
 async function updateActionForTab(tab) {
   if (!tab?.id) return;
   try {
-    if (isConversationTab(tab)) await chrome.action.enable(tab.id);
+    if (CHATGPT_URL.test(tab.url || '')) await chrome.action.enable(tab.id);
     else await chrome.action.disable(tab.id);
   } catch {
     // Tab may have disappeared while the service worker was waking.
@@ -30,19 +26,10 @@ async function updateActionForTab(tab) {
 }
 
 function setupAction() {
-  // The graph is an in-page dock now. Keep the browser action disabled outside
-  // ChatGPT conversations and disable the legacy browser side panel globally.
+  // The in-page dock replaces the legacy browser side panel. Keep the settings
+  // popup available on ChatGPT, but make the extension action inert elsewhere.
   chrome.action.disable();
   try { chrome.sidePanel?.setOptions?.({ enabled: false }); } catch {}
-
-  chrome.action.onClicked.addListener(async (tab) => {
-    if (!isConversationTab(tab)) return;
-    try {
-      await chrome.tabs.sendMessage(tab.id, { type: 'CG_TOGGLE_DOCKED_PANEL' });
-    } catch (error) {
-      console.warn('[Background] Could not toggle docked panel:', error?.message || error);
-    }
-  });
 
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.url || changeInfo.status === 'complete') void updateActionForTab(tab);
