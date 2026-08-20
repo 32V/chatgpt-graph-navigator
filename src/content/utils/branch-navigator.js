@@ -14,8 +14,8 @@ import {
 } from './message-id-helper.js';
 
 const BRANCH_COUNTER_RE = /^(\d+)\s*\/\s*(\d+)$/;
-const PREV_LABEL_RE = /(?:\bprev(?:ious)?\b|\bearlier\b|이전)/i;
-const NEXT_LABEL_RE = /(?:\bnext\b|\blater\b|다음)/i;
+const PREV_LABEL_RE = /(?:\bprev(?:ious)?\b|\bearlier\b)/i;
+const NEXT_LABEL_RE = /(?:\bnext\b|\blater\b)/i;
 const MAX_NAV_STEPS = 128;
 const BRANCH_CHANGE_TIMEOUT = 3000;
 const MOUNT_TIMEOUT = 6000;
