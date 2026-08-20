@@ -8,7 +8,7 @@
  * 5. 发送数据到 Service Worker
  * 6. 监听 URL 变化（对话切换）
  * 7. 监听 DOM 变化（新消息）
- * 8. 增量更新 graph tree
+ * 8. 以 backend mapping 为准同步 graph tree
  */
 
 import {
@@ -36,6 +36,19 @@ import { toggleFloatingPanel, toggleClickThrough, toggleLock } from './ui/floati
 let urlObserver = null;
 let messageObserver = null;
 const CONTENT_SCRIPT_GUARD = '__chatgptGraphContentInitialized__';
+
+// DOM observations are only change signals. Conversation ancestry is refreshed
+// from ChatGPT's canonical backend mapping instead of being inferred from DOM
+// adjacency, which is unreliable under wrappers and virtualization.
+const CANONICAL_SYNC_USER_DELAY = 1500;
+const CANONICAL_SYNC_ASSISTANT_DELAY = 250;
+const CANONICAL_SYNC_RETRY_DELAY = 800;
+const CANONICAL_SYNC_MAX_RETRIES = 3;
+let canonicalSyncTimer = null;
+let canonicalSyncInFlight = false;
+let canonicalSyncQueued = false;
+let canonicalSyncRetryCount = 0;
+const pendingObservedMessageIds = new Set();
 
 async function loadAssistantStreamSettings() {
   try {
@@ -608,6 +621,75 @@ async function main() {
   startMessageObserver();
 }
 
+function resetCanonicalSyncState() {
+  if (canonicalSyncTimer) {
+    clearTimeout(canonicalSyncTimer);
+    canonicalSyncTimer = null;
+  }
+  canonicalSyncQueued = false;
+  canonicalSyncRetryCount = 0;
+  pendingObservedMessageIds.clear();
+}
+
+function scheduleCanonicalSync(delayMs = CANONICAL_SYNC_ASSISTANT_DELAY) {
+  if (canonicalSyncTimer) clearTimeout(canonicalSyncTimer);
+  canonicalSyncTimer = setTimeout(() => {
+    canonicalSyncTimer = null;
+    runCanonicalSync().catch(error => {
+      log('error', 'Content', 'Canonical conversation sync failed:', error);
+    });
+  }, delayMs);
+}
+
+async function runCanonicalSync() {
+  if (canonicalSyncInFlight) {
+    canonicalSyncQueued = true;
+    return;
+  }
+
+  const conversationId = extractConversationId();
+  if (!conversationId || !conversationState.isReady()) return;
+
+  canonicalSyncInFlight = true;
+  try {
+    const conversationData = await fetchAndProcessConversation(conversationId);
+    if (!conversationData) {
+      // A response discarded because the tab already moved to another chat
+      // must not schedule retries against the new conversation.
+      if (extractConversationId() !== conversationId) return;
+      if (canonicalSyncRetryCount < CANONICAL_SYNC_MAX_RETRIES) {
+        canonicalSyncRetryCount++;
+        scheduleCanonicalSync(CANONICAL_SYNC_RETRY_DELAY * canonicalSyncRetryCount);
+      }
+      return;
+    }
+
+    const mapping = conversationData.mapping || {};
+    for (const messageId of Array.from(pendingObservedMessageIds)) {
+      if (mapping[messageId]) pendingObservedMessageIds.delete(messageId);
+    }
+
+    if (pendingObservedMessageIds.size > 0 && canonicalSyncRetryCount < CANONICAL_SYNC_MAX_RETRIES) {
+      canonicalSyncRetryCount++;
+      scheduleCanonicalSync(CANONICAL_SYNC_RETRY_DELAY * canonicalSyncRetryCount);
+    } else {
+      if (pendingObservedMessageIds.size > 0) {
+        log('debug', 'Content', 'Observed DOM IDs were not present in the backend snapshot after retries', {
+          ids: Array.from(pendingObservedMessageIds)
+        });
+      }
+      pendingObservedMessageIds.clear();
+      canonicalSyncRetryCount = 0;
+    }
+  } finally {
+    canonicalSyncInFlight = false;
+    if (canonicalSyncQueued) {
+      canonicalSyncQueued = false;
+      scheduleCanonicalSync(100);
+    }
+  }
+}
+
 /**
  * 启动 URL 观察器
  * 监听用户切换对话，自动重新加载数据
@@ -622,6 +704,8 @@ function startURLObserver() {
 
   urlObserver = createURLObserver(async (newConversationId, oldConversationId) => {
     log('info', 'Content', `Conversation switched: ${oldConversationId} → ${newConversationId}`);
+
+    resetCanonicalSyncState();
 
     // 清空旧的状态
     conversationState.clear();
@@ -643,72 +727,50 @@ function startURLObserver() {
 
 /**
  * 启动消息观察器
- * 监听新消息，进行增量更新
+ * DOM 只负责报告变化；graph topology 始终从 backend mapping 重新同步。
  */
 function startMessageObserver() {
-  log('info', 'Content', 'Starting message observer for incremental updates');
+  log('info', 'Content', 'Starting message observer for canonical graph sync');
 
   // 停止旧的观察器（如果存在）
   if (messageObserver) {
     messageObserver.stop();
   }
 
-  messageObserver = createMessageObserver(async (messageData) => {
-    log('info', 'Content', `New message detected`, {
+  messageObserver = createMessageObserver((messageData) => {
+    log('info', 'Content', 'New message detected', {
       id: messageData.id.substring(0, 8) + '...',
       role: messageData.role
     });
 
-    // 处理增量消息
-    await handleIncrementalMessage(messageData);
+    handleIncrementalMessage(messageData);
   });
 
   log('info', 'Content', 'Message observer started');
 }
 
 /**
- * 处理增量消息
+ * DOM-derived parent links are not authoritative. Treat an observed message as
+ * a signal to refresh the canonical backend mapping instead of mutating graph
+ * topology from DOM adjacency.
  * @param {Object} messageData - 从 DOM 提取的消息数据
  */
-async function handleIncrementalMessage(messageData) {
-  try {
-    // 检查状态是否已初始化
-    if (!conversationState.isReady()) {
-      log('warn', 'Content', 'State not initialized, skipping incremental update');
-      return;
-    }
-
-    // 添加增量节点到状态
-    const updateResult = conversationState.addIncrementalNode(messageData);
-
-    if (!updateResult.changed) {
-      log('debug', 'Content', 'Node already exists or failed to add', updateResult);
-      return;
-    }
-
-    // 获取增量更新数据
-    const incrementalUpdate = conversationState.getIncrementalUpdate(updateResult.nodeId);
-
-    log('info', 'Content', 'Incremental update prepared', {
-      nodeId: updateResult.nodeId.substring(0, 8) + '...',
-      action: updateResult.action,
-      totalNodes: conversationState.getStats().totalNodes
-    });
-
-    // 发送增量更新到 background（失败不影响后续流程）
-    try {
-      await sendToBackground(MESSAGE_TYPES.CONVERSATION_INCREMENTAL_UPDATE, incrementalUpdate);
-      log('info', 'Content', '✓ Incremental update sent to background');
-    } catch (bgError) {
-      log('error', 'Content', 'Failed to send incremental update:', bgError.message);
-    }
-
-    // 输出调试信息
-    logIncrementalUpdate(messageData, conversationState.getStats());
-
-  } catch (error) {
-    log('error', 'Content', 'Failed to handle incremental message:', error);
+function handleIncrementalMessage(messageData) {
+  if (!conversationState.isReady()) {
+    log('warn', 'Content', 'State not initialized, skipping canonical sync signal');
+    return;
   }
+
+  if (messageData?.id) pendingObservedMessageIds.add(messageData.id);
+  logCanonicalSyncObservation(messageData);
+
+  // User messages arrive before generation starts. Give fast responses a chance
+  // to finish so their final assistant message can collapse the two signals into
+  // one GET. Long generations still sync the user turn after this short delay.
+  const delayMs = messageData?.role === 'user'
+    ? CANONICAL_SYNC_USER_DELAY
+    : CANONICAL_SYNC_ASSISTANT_DELAY;
+  scheduleCanonicalSync(delayMs);
 }
 
 /**
@@ -759,6 +821,7 @@ async function waitForPageReady() {
 /**
  * 获取并处理对话数据
  * @param {string} conversationId - 对话 ID
+ * @returns {Promise<Object|null>} canonical conversation snapshot
  */
 async function fetchAndProcessConversation(conversationId) {
   try {
@@ -769,6 +832,13 @@ async function fetchAndProcessConversation(conversationId) {
 
     if (!data || !data.mapping) {
       throw new Error('Invalid conversation data');
+    }
+
+    // A slower request from the previous chat must never overwrite state after
+    // the user has already navigated to another conversation.
+    if (extractConversationId() !== conversationId) {
+      log('debug', 'Content', `Discarding stale conversation response: ${conversationId}`);
+      return null;
     }
 
     log('info', 'Content', 'Conversation data received', {
@@ -813,7 +883,7 @@ async function fetchAndProcessConversation(conversationId) {
       analysis
     };
 
-    // 5. 初始化状态管理器（用于增量更新）
+    // 5. 初始化状态管理器
     conversationState.initialize(conversationData);
     log('info', 'Content', '✓ Conversation state initialized');
 
@@ -828,6 +898,7 @@ async function fetchAndProcessConversation(conversationId) {
 
     // 7. 输出调试信息到控制台（即使 background 失败也要显示）
     logDebugInfo(conversationData);
+    return conversationData;
 
   } catch (error) {
     log('error', 'Content', 'Failed to process conversation:', error);
@@ -841,6 +912,7 @@ async function fetchAndProcessConversation(conversationId) {
     } catch (bgError) {
       log('warn', 'Content', 'Could not send error to background:', bgError.message);
     }
+    return null;
   }
 }
 
@@ -950,36 +1022,16 @@ function logDebugInfo(conversationData) {
   console.groupEnd();
 }
 
-/**
- * 输出增量更新调试信息
- * @param {Object} messageData - 新消息数据
- * @param {Object} stats - 对话统计信息
- */
-function logIncrementalUpdate(messageData, stats) {
-  // Only log debug info if debug logging is enabled
-  if (!getDebugLogEnabled()) {
-    return;
-  }
+function logCanonicalSyncObservation(messageData) {
+  if (!getDebugLogEnabled()) return;
 
-  console.group('🆕 ChatGPT Graph - Incremental Update');
-
-  console.log('📨 New Message:', {
-    'ID': messageData.id.substring(0, 16) + '...',
-    'Role': messageData.role,
-    'Content Length': messageData.content.length,
-    'Parent': messageData.parent?.substring(0, 16) + '...' || '(none)'
+  console.group('🆕 ChatGPT Graph - Canonical Sync Scheduled');
+  console.log('📨 DOM change signal:', {
+    'ID': messageData?.id?.substring(0, 16) + '...',
+    'Role': messageData?.role,
+    'Content Length': messageData?.content?.length || 0
   });
-
-  console.log('📊 Updated Statistics:', {
-    'Total Nodes': stats.totalNodes,
-    'Total Rounds': stats.totalRounds,
-    'Total Branches': stats.totalBranches,
-    'Branch Points': stats.branchPoints,
-    'Incremental Nodes': stats.incrementalNodes
-  });
-
-  console.log('⚡ Update Method: DOM extraction (no API call)');
-
+  console.log('⚡ Update Method: backend conversation mapping refresh');
   console.groupEnd();
 }
 

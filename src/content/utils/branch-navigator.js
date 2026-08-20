@@ -1,547 +1,602 @@
 /**
- * 分支导航模块
- * 用于导航到不在当前显示分支上的消息
+ * Branch navigation helpers.
+ *
+ * Conversation topology comes from ChatGPT's backend mapping. The DOM is used
+ * only as an actuator: to identify the currently rendered sibling, expose a
+ * virtualized turn, and click ChatGPT's native branch controls.
  */
 
 import { log } from '../../shared/utils.js';
 import {
   resolveMessageId,
   findArticleByMessageId,
-  messageIdExistsInDOM,
   getAllMessageContainers
 } from './message-id-helper.js';
 
-/**
- * 获取当前页面显示的路径 ID 列表
- */
-export function getCurrentDisplayedPath() {
-  const articles = getAllMessageContainers();
+const BRANCH_COUNTER_RE = /^(\d+)\s*\/\s*(\d+)$/;
+const PREV_LABEL_RE = /(?:\bprev(?:ious)?\b|\bearlier\b|上一|이전)/i;
+const NEXT_LABEL_RE = /(?:\bnext\b|\blater\b|下一|다음)/i;
+const MAX_NAV_STEPS = 128;
+const BRANCH_CHANGE_TIMEOUT = 3000;
+const MOUNT_TIMEOUT = 6000;
 
-  const path = Array.from(articles).map((article) => {
-    // 使用统一的 resolveMessageId 函数提取 ID
-    const messageId = resolveMessageId(article);
-    if (messageId) return messageId;
-
-    // 最后的兜底：data-turn-id
-    return article.getAttribute('data-turn-id');
-  });
-
-  // 过滤无效值
-  return path.filter(id => id);
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * 获取消息在当前显示中的分支信息
- * 针对 HTML 结构：<div class="... tabular-nums">1/2</div>
- * @param {string} id - 消息 ID (messageId 或 turnId)
- * @returns {{ current: number, total: number } | null} 分支信息
- */
-export function getBranchInfo(id) {
+function isRendered(element) {
+  if (!element?.isConnected) return false;
+  const style = window.getComputedStyle(element);
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function buttonLabel(button) {
+  return [
+    button?.getAttribute?.('aria-label'),
+    button?.getAttribute?.('title'),
+    button?.textContent
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+}
+
+function isDisabledButton(button) {
+  return !button || button.disabled || button.getAttribute('aria-disabled') === 'true';
+}
+
+function parseBranchCounter(element) {
+  const text = (element?.textContent || '').trim();
+  const match = text.match(BRANCH_COUNTER_RE);
+  if (!match) return null;
+
+  const current = Number.parseInt(match[1], 10);
+  const total = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 1) return null;
+  if (current < 1 || current > total) return null;
+
+  return { current, total };
+}
+
+function rankButtonsNearCounter(counter, buttons) {
+  if (!counter) return [];
+  const counterRect = counter.getBoundingClientRect();
+  const counterX = (counterRect.left + counterRect.right) / 2;
+  const counterY = (counterRect.top + counterRect.bottom) / 2;
+
+  return buttons
+    .map(button => {
+      const rect = button.getBoundingClientRect();
+      const centerX = (rect.left + rect.right) / 2;
+      const centerY = (rect.top + rect.bottom) / 2;
+      return {
+        button,
+        centerX,
+        distance: Math.abs(centerX - counterX) + Math.abs(centerY - counterY),
+        visible: rect.width > 0 && rect.height > 0
+      };
+    })
+    .filter(candidate => candidate.visible)
+    .sort((a, b) => a.distance - b.distance);
+}
+
+function nearestButtonsToCounter(counter, buttons) {
+  const ranked = rankButtonsNearCounter(counter, buttons);
+  if (ranked.length < 2) return null;
+
+  const counterRect = counter.getBoundingClientRect();
+  const counterX = (counterRect.left + counterRect.right) / 2;
+  const left = ranked.find(candidate => candidate.centerX < counterX);
+  const right = ranked.find(candidate => candidate.centerX > counterX);
+  if (!left || !right || left.distance > 240 || right.distance > 240) return null;
+
+  return { prevButton: left.button, nextButton: right.button };
+}
+
+function findControlsAroundCounter(counter) {
+  const info = parseBranchCounter(counter);
+  if (!info) return null;
+
+  let scope = counter.parentElement;
+  for (let depth = 0; depth < 6 && scope; depth++) {
+    const buttons = Array.from(scope.querySelectorAll('button'));
+    const ranked = rankButtonsNearCounter(counter, buttons);
+    const prevButton = ranked.find(({ button, distance }) =>
+      distance <= 240 && PREV_LABEL_RE.test(buttonLabel(button))
+    )?.button || null;
+    const nextButton = ranked.find(({ button, distance }) =>
+      distance <= 240 && NEXT_LABEL_RE.test(buttonLabel(button))
+    )?.button || null;
+
+    // Prefer semantic controls that are spatially close to the counter. At the
+    // first/last branch ChatGPT may omit one edge button entirely, so one
+    // identified direction is still useful.
+    if (prevButton || nextButton) {
+      return { ...info, counter, prevButton, nextButton };
+    }
+
+    if (buttons.length >= 2) {
+      const positional = nearestButtonsToCounter(counter, buttons);
+      if (positional) {
+        return { ...info, counter, ...positional };
+      }
+    }
+    scope = scope.parentElement;
+  }
+
+  return null;
+}
+
+function revealTurnControls(article) {
+  if (!article) return;
+  const rect = article.getBoundingClientRect();
+  const init = {
+    bubbles: true,
+    clientX: Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2)),
+    clientY: Math.max(0, Math.min(window.innerHeight - 1, rect.top + Math.min(rect.height / 2, 80)))
+  };
+  article.dispatchEvent(new MouseEvent('mouseover', init));
+  article.dispatchEvent(new MouseEvent('mouseenter', init));
+}
+
+function findBranchControls(id) {
   const article = findArticleByMessageId(id);
   if (!article) return null;
 
-  // 1. 查找包含数字的元素
-  // <div class="px-0.5 text-sm font-semibold tabular-nums">1/2</div>
-  const branchInfoEl = article.querySelector('.tabular-nums');
-  
-  // 如果找不到，说明没有分支（比如只有一条回复的情况，界面上可能不显示这个条）
-  if (!branchInfoEl) {
-    // 默认返回 1/1
-    return { current: 1, total: 1 };
+  const scopes = [
+    article,
+    article.closest?.('[data-turn-id-container]'),
+    article.parentElement
+  ].filter(Boolean);
+
+  for (const scope of new Set(scopes)) {
+    const candidates = Array.from(scope.querySelectorAll('span, div'));
+    for (const candidate of candidates) {
+      const controls = findControlsAroundCounter(candidate);
+      if (controls) return controls;
+    }
   }
 
-  // 2. 解析文本 "1/2"
-  const text = branchInfoEl.innerText.trim();
-  const match = text.match(/(\d+)\s*\/\s*(\d+)/); // \s* 允许数字和斜杠间有空格
-  
-  if (match) {
-    return {
-      current: parseInt(match[1], 10),
-      total: parseInt(match[2], 10)
-    };
-  }
-  
-  // 如果找到了元素但没解析出数字，兜底返回 1/1
-  return { current: 1, total: 1 };
+  return null;
 }
 
 /**
- * 点击分支导航按钮
- * 策略：找到 .tabular-nums，它的前一个兄弟是 Prev，后一个兄弟是 Next
- * @param {string} id - 消息 ID
- * @param {'prev' | 'next'} direction - 导航方向
+ * Returns IDs for the turns that are currently mounted in the ChatGPT DOM.
+ * This is intentionally not treated as the full active branch because ChatGPT
+ * virtualizes long conversations.
  */
+export function getCurrentDisplayedPath() {
+  return getAllMessageContainers()
+    .map(container => resolveMessageId(container) || container.getAttribute('data-turn-id'))
+    .filter(Boolean);
+}
+
+export function getBranchInfo(id) {
+  const controls = findBranchControls(id);
+  return controls ? { current: controls.current, total: controls.total } : null;
+}
+
 export function clickBranchButton(id, direction) {
-  const article = findArticleByMessageId(id);
-  if (!article) {
-    log('warn', 'BranchNav', `Article not found for ID: ${id}`);
+  const controls = findBranchControls(id);
+  if (!controls) {
+    log('warn', 'BranchNav', `Branch controls not found for ${id}`);
     return false;
   }
 
-  // 1. 先找到路标：那个显示数字的 div
-  const branchInfoEl = article.querySelector('.tabular-nums');
-  if (!branchInfoEl) {
-    log('warn', 'BranchNav', `Branch info element (.tabular-nums) not found for ${id}`);
+  const button = direction === 'prev' ? controls.prevButton : controls.nextButton;
+  if (isDisabledButton(button)) {
+    log('warn', 'BranchNav', `Branch button ${direction} is disabled for ${id}`);
     return false;
   }
 
-  let button = null;
-
-  // 2. 利用 DOM 结构查找按钮 (结构是：Button - Div - Button)
-  if (direction === 'prev') {
-    // 上一个兄弟元素
-    button = branchInfoEl.previousElementSibling;
-    // 再次确认它是不是按钮 (防止中间插了别的 div)
-    if (button && button.tagName !== 'BUTTON') {
-      button = button.querySelector('button') || branchInfoEl.parentElement.firstElementChild;
-    }
-  } else {
-    // 下一个兄弟元素
-    button = branchInfoEl.nextElementSibling;
-    if (button && button.tagName !== 'BUTTON') {
-      button = button.querySelector('button') || branchInfoEl.parentElement.lastElementChild;
-    }
-  }
-
-  // 3. 兜底策略：如果兄弟节点找错了，直接找父容器里的所有按钮
-  if (!button || button.tagName !== 'BUTTON') {
-    const parent = branchInfoEl.parentElement;
-    if (parent) {
-      const allButtons = parent.querySelectorAll('button');
-      if (allButtons.length >= 2) {
-        button = direction === 'prev' ? allButtons[0] : allButtons[allButtons.length - 1];
-      }
-    }
-  }
-
-  if (!button) {
-    log('error', 'BranchNav', `Button ${direction} not found`);
-    return false;
-  }
-
-  // 4. 检查禁用状态
-  if (button.disabled) {
-    log('warn', 'BranchNav', `Button ${direction} is disabled`);
-    return false;
-  }
-
-  // 5. 执行点击 (JS 点击无视 opacity: 0)
   try {
     button.click();
     return true;
-  } catch (e) {
-    log('error', 'BranchNav', `Click failed: ${e.message}`);
+  } catch (error) {
+    log('error', 'BranchNav', `Failed to click ${direction}: ${error.message}`);
     return false;
   }
 }
 
+function findMountedSibling(siblingIds, excludeId = null) {
+  for (const siblingId of siblingIds) {
+    if (siblingId === excludeId) continue;
+    const article = findArticleByMessageId(siblingId);
+    if (article && isRendered(article)) return siblingId;
+  }
+  return null;
+}
+
 /**
- * 等待 DOM 更新（消息切换后）
- * 修复：不再胡乱推测新的 ID，只负责检测旧元素是否消失/脱离文档流
- * @param {string} oldId - 点击前的消息 ID
- * @param {number} timeout - 超时时间（毫秒）
- * @returns {Promise<void>} 成功则 resolve，超时 reject
+ * Wait until a different member of a sibling group is rendered.
  */
-export function waitForBranchChange(oldId, timeout = 2000) {
-  return new Promise((resolve, reject) => {
-    const startTime = Date.now();
-    
-    // 1. 在点击刚刚发生时，先尝试获取一次旧元素作为参照
-    // 注意：这里我们通过 ID 查找特定的 DOM 节点引用
-    // 如果是 messageId，我们要找到那个内部的 div；如果是 article，就找 article
-    // 为了简单判断，我们直接看能不能在 DOM 里再 select 到这个 ID
-    
-    const checkChange = () => {
-      // 使用统一的函数检查旧 ID 是否还存在于 DOM 中
-      const stillExists = messageIdExistsInDOM(oldId);
+export function waitForBranchChange(oldId, timeout = BRANCH_CHANGE_TIMEOUT, siblingIds = null) {
+  return new Promise(resolve => {
+    const start = Date.now();
 
-      // 如果旧 ID 不存在了，说明 DOM 已经刷新
-      if (!stillExists) {
-        resolve(); // 变化已完成
-        return;
+    const check = () => {
+      if (Array.isArray(siblingIds) && siblingIds.length > 0) {
+        const current = findMountedSibling(siblingIds, oldId);
+        if (current) {
+          resolve(current);
+          return;
+        }
+      } else {
+        const oldArticle = findArticleByMessageId(oldId);
+        if (!oldArticle || !isRendered(oldArticle)) {
+          resolve(null);
+          return;
+        }
       }
 
-      // 检查超时
-      if (Date.now() - startTime > timeout) {
-        // [修改建议] 超时通常不应该 reject，因为有时 React 复用了组件导致 ID 没变（比如内容变了但 ID 还没变，或者这就是同一个分支？）
-        // 但对于 message-id 切换机制，ID 必须变。所以这里 reject 是合理的。
-        log('warn', 'BranchNav', `Timeout waiting for ID ${oldId} to disappear`);
-        // 即使超时，也 resolve 让流程继续尝试，由后续的路径检查来决定是否失败
-        resolve(); 
+      if (Date.now() - start >= timeout) {
+        resolve(null);
         return;
       }
-
-      requestAnimationFrame(checkChange);
+      requestAnimationFrame(check);
     };
 
-    requestAnimationFrame(checkChange);
+    requestAnimationFrame(check);
   });
 }
 
 /**
- * 在指定消息处切换到目标分支索引
- * 修复：使用 messageId，并基于层级深度(Depth)进行稳定切换
- * * @param {string} startMessageId - 起始消息的 message ID
- * @param {number} targetIndex - 目标分支索引（1-based）
- * @returns {Promise<boolean>} 是否成功
- */
-export async function switchToBranchIndex(startMessageId, targetIndex) {
-  // 1. 获取分支信息 (确保 getBranchInfo 内部也支持 messageId 查找)
-  const branchInfo = getBranchInfo(startMessageId);
-  
-  if (!branchInfo) {
-    log('warn', 'BranchNav', `No branch info for message: ${startMessageId}`);
-    return false;
-  }
-
-  const { current, total } = branchInfo;
-
-  if (targetIndex < 1 || targetIndex > total) {
-    log('warn', 'BranchNav', `Invalid target index: ${targetIndex}/${total}`);
-    return false;
-  }
-
-  if (current === targetIndex) {
-    log('info', 'BranchNav', `Already on branch ${targetIndex}`);
-    return true;
-  }
-
-  // 2. 锁定层级 (Depth)
-  // 因为每次点击后，当前层级的 messageId 会变 (v1 -> v2)，所以我们不能一直用 startMessageId
-  // 我们必须记住它在路径中的位置（索引）。
-  let currentPath = getCurrentDisplayedPath();
-  const depthIndex = currentPath.indexOf(startMessageId);
-
-  if (depthIndex === -1) {
-    log('error', 'BranchNav', `Start message ${startMessageId} not found in current path`);
-    return false;
-  }
-
-  // 计算需要点击的次数和方向
-  const diff = targetIndex - current;
-  const direction = diff > 0 ? 'next' : 'prev';
-  const clicks = Math.abs(diff);
-
-  log('info', 'BranchNav', `Switching depth [${depthIndex}] from ${current} to ${targetIndex} (${clicks} clicks ${direction})`);
-
-  // 3. 执行循环点击
-  for (let i = 0; i < clicks; i++) {
-    // 重新获取路径 (因为上一次点击可能已经改变了 DOM)
-    currentPath = getCurrentDisplayedPath();
-    
-    // [关键修正] 获取当前层级对应的 ID
-    // 比如：第一次循环是 v1的ID，第二次循环就是 v2的ID
-    const currentIdAtDepth = currentPath[depthIndex];
-
-    if (!currentIdAtDepth) {
-      log('error', 'BranchNav', `Lost track of node at depth ${depthIndex} during step ${i + 1}`);
-      return false;
-    }
-
-    // 执行点击
-    if (!clickBranchButton(currentIdAtDepth, direction)) {
-      log('error', 'BranchNav', `Failed to click ${direction} button for ${currentIdAtDepth} at step ${i + 1}`);
-      return false;
-    }
-
-    // 等待 DOM 更新
-    try {
-      // 这里的 waitForBranchChange 需要传入旧 ID，它会等待直到该 ID 从 DOM 消失或变为新状态
-      await waitForBranchChange(currentIdAtDepth, 2000);
-      
-      // 额外缓冲，等待 React 彻底渲染完新 ID
-      await new Promise(resolve => setTimeout(resolve, 200));
-    } catch (error) {
-      log('error', 'BranchNav', `Error waiting for branch change: ${error.message}`);
-      return false;
-    }
-  }
-
-  return true;
-}
-
-/**
- * 根据节点数据构建从根到目标的路径
- * @param {string} targetId - 目标消息 ID
- * @param {Map<string, Object>} nodeMap - 节点映射
- * @returns {string[]} 从根到目标的路径（ID 数组）
+ * Build a root-to-target path from canonical node parent links.
  */
 export function buildPathToTarget(targetId, nodeMap) {
   const path = [];
+  const visited = new Set();
   let currentId = targetId;
-  let safetyCounter = 0;
-  const MAX_DEPTH = 10000; // 足够深，但防止死循环
 
-  while (currentId) {
+  while (currentId && nodeMap.has(currentId) && !visited.has(currentId)) {
+    visited.add(currentId);
     path.unshift(currentId);
-    
-    // 安全熔断
-    if (++safetyCounter > MAX_DEPTH) {
-      console.error('[buildPathToTarget] Potential cycle detected or path too long');
-      break;
-    }
-
-    const node = nodeMap.get(currentId);
-    currentId = node?.parent || null;
+    currentId = nodeMap.get(currentId)?.parent || null;
   }
 
   return path;
 }
 
 /**
- * 计算兄弟节点中的索引（1-based）
- * @param {string} nodeId - 节点 ID
- * @param {Map<string, Object>} nodeMap - 节点映射
- * @returns {number} 在兄弟中的索引（1-based），如果无法确定返回 1
- */
-export function getSiblingIndex(nodeId, nodeMap) {
-  // 1. 获取排序好的兄弟列表
-  const siblings = getSiblings(nodeId, nodeMap);
-  
-  // 2. 查找当前节点的位置
-  const index = siblings.indexOf(nodeId);
-  
-  // 3. 转换为 1-based 索引
-  // 如果没找到 (index === -1)，默认返回 1
-  return index >= 0 ? index + 1 : 1;
-}
-
-/**
- * 获取节点的所有兄弟节点 ID（包括自己）
- * @param {string} nodeId - 节点 ID
- * @param {Map<string, Object>} nodeMap - 节点映射
- * @returns {string[]} 兄弟节点 ID 数组（按 createTime 排序）
+ * Return sibling IDs in graph order. For root-level nodes the filtered parent
+ * may be absent, so creation order is the fallback. Navigation verifies actual
+ * message IDs and does not rely on this order when it disagrees with the UI.
  */
 export function getSiblings(nodeId, nodeMap) {
   const node = nodeMap.get(nodeId);
   if (!node) return [nodeId];
 
-  let siblingsNodes = [];
+  if (node.parent) {
+    const parent = nodeMap.get(node.parent);
+    if (!parent?.children?.length) return [nodeId];
+    return parent.children.filter(id => nodeMap.has(id));
+  }
 
-  // 情况 A: 没有父节点 (Root 节点)
-  if (!node.parent) {
-    // 注意：这就需要遍历整个 map，性能开销较大但不可避免
-    siblingsNodes = Array.from(nodeMap.values())
-      .filter(n => !n.parent);
-  } 
-  // 情况 B: 有父节点
-  else {
-    const parentNode = nodeMap.get(node.parent);
-    if (parentNode && parentNode.children) {
-      siblingsNodes = parentNode.children
-        .map(id => nodeMap.get(id))
-        .filter(n => n); // 过滤掉找不到的脏数据
-    } else {
-      // 父节点数据丢失的边缘情况
-      return [nodeId];
+  const rawParent = node._rawParent || null;
+  return Array.from(nodeMap.values())
+    .filter(candidate => !candidate.parent && (rawParent ? candidate._rawParent === rawParent : true))
+    .sort((a, b) => {
+      const timeDiff = (a.createTime || 0) - (b.createTime || 0);
+      return timeDiff || String(a.id).localeCompare(String(b.id));
+    })
+    .map(candidate => candidate.id);
+}
+
+export function getSiblingIndex(nodeId, nodeMap) {
+  const siblings = getSiblings(nodeId, nodeMap);
+  const index = siblings.indexOf(nodeId);
+  return index >= 0 ? index + 1 : 1;
+}
+
+function buildDepthMap(nodes) {
+  const nodeMap = new Map(nodes.map(node => [node.id, node]));
+  const cache = new Map();
+
+  const depthOf = (id, visiting = new Set()) => {
+    if (cache.has(id)) return cache.get(id);
+    if (visiting.has(id)) return 0;
+    visiting.add(id);
+
+    const parentId = nodeMap.get(id)?.parent;
+    const depth = parentId && nodeMap.has(parentId) ? depthOf(parentId, visiting) + 1 : 0;
+    cache.set(id, depth);
+    visiting.delete(id);
+    return depth;
+  };
+
+  for (const node of nodes) depthOf(node.id);
+  return cache;
+}
+
+function findScrollContainer() {
+  const sample = getAllMessageContainers()[0];
+  let current = sample?.parentElement || document.querySelector('main');
+
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const scrollable =
+      (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+      current.scrollHeight > current.clientHeight;
+    if (scrollable) return current;
+    current = current.parentElement;
+  }
+
+  return document.scrollingElement || document.documentElement;
+}
+
+function mountedDepthRange(nodeMap, depthMap) {
+  const depths = [];
+  for (const container of getAllMessageContainers()) {
+    const id = resolveMessageId(container) || container.getAttribute('data-turn-id');
+    if (id && nodeMap.has(id) && depthMap.has(id) && isRendered(container)) {
+      depths.push(depthMap.get(id));
     }
   }
 
-  // [关键优化] 稳定排序逻辑
-  siblingsNodes.sort((a, b) => {
-    const timeA = a.createTime || 0;
-    const timeB = b.createTime || 0;
-    
-    // 1. 优先按创建时间排序 (旧 -> 新)
-    if (timeA !== timeB) {
-      return timeA - timeB;
-    }
-    
-    // 2. 时间相同，按 ID 字典序排序 (确保确定性)
-    // 这一步能防止 "Diff" 计算在刷新后发生跳变
-    if (a.id < b.id) return -1;
-    if (a.id > b.id) return 1;
-    return 0;
-  });
+  if (depths.length === 0) return null;
+  return { min: Math.min(...depths), max: Math.max(...depths) };
+}
 
-  return siblingsNodes.map(n => n.id);
+async function mountSiblingGroup(siblingIds, targetDepth, nodeMap, depthMap, timeout = MOUNT_TIMEOUT) {
+  let current = findMountedSibling(siblingIds);
+  if (current) return current;
+
+  const scrollContainer = findScrollContainer();
+  if (!scrollContainer) return null;
+
+  const setScrollTop = (top) => {
+    if (typeof scrollContainer.scrollTo === 'function') {
+      scrollContainer.scrollTo({ top, behavior: 'auto' });
+    } else {
+      scrollContainer.scrollTop = top;
+    }
+  };
+
+  let maxDepth = 1;
+  for (const depth of depthMap.values()) {
+    if (depth > maxDepth) maxDepth = depth;
+  }
+  let maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+  if (maxScrollTop > 0) {
+    const estimated = Math.round((targetDepth / maxDepth) * maxScrollTop);
+    setScrollTop(estimated);
+    await sleep(120);
+  }
+
+  const started = Date.now();
+  let lastTop = -1;
+  while (Date.now() - started < timeout) {
+    current = findMountedSibling(siblingIds);
+    if (current) return current;
+
+    const range = mountedDepthRange(nodeMap, depthMap);
+    const step = Math.max(240, Math.round(scrollContainer.clientHeight * 0.75));
+    let nextTop = scrollContainer.scrollTop;
+
+    if (!range) {
+      nextTop += step;
+    } else if (targetDepth < range.min) {
+      nextTop -= step;
+    } else if (targetDepth > range.max) {
+      nextTop += step;
+    } else {
+      // The desired logical depth is near the viewport but the exact turn is
+      // not mounted yet. Nudge toward the corresponding half of the range.
+      const midpoint = (range.min + range.max) / 2;
+      const direction = targetDepth <= midpoint ? -1 : 1;
+      nextTop += direction * Math.max(120, Math.round(step / 2));
+    }
+
+    maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+    const clamped = Math.max(0, Math.min(maxScrollTop, nextTop));
+    if (Math.abs(clamped - lastTop) < 1) {
+      const opposite = Math.max(0, Math.min(maxScrollTop, clamped - step));
+      if (Math.abs(opposite - clamped) < 1) break;
+      setScrollTop(opposite);
+      lastTop = opposite;
+    } else {
+      setScrollTop(clamped);
+      lastTop = clamped;
+    }
+    await sleep(140);
+  }
+
+  return findMountedSibling(siblingIds);
+}
+
+async function getControlsForMountedSibling(currentId) {
+  let controls = findBranchControls(currentId);
+  if (controls) return controls;
+
+  const article = findArticleByMessageId(currentId);
+  article?.scrollIntoView({ behavior: 'auto', block: 'center' });
+  revealTurnControls(article);
+  await sleep(180);
+  return findBranchControls(currentId);
+}
+
+async function moveSiblingOnce(currentId, direction, siblingIds) {
+  const controls = await getControlsForMountedSibling(currentId);
+  if (!controls) return null;
+
+  const button = direction === 'next' ? controls.nextButton : controls.prevButton;
+  if (isDisabledButton(button)) return null;
+
+  button.click();
+  const nextId = await waitForBranchChange(currentId, BRANCH_CHANGE_TIMEOUT, siblingIds);
+  if (nextId) await sleep(100);
+  return nextId;
+}
+
+async function scanSiblingGroupForTarget(currentId, targetId, siblingIds) {
+  // First walk to the first native branch, checking every ID on the way.
+  for (let step = 0; step < MAX_NAV_STEPS; step++) {
+    if (currentId === targetId) return currentId;
+    const controls = await getControlsForMountedSibling(currentId);
+    if (!controls) return null;
+    if (controls.current <= 1) break;
+
+    const nextId = await moveSiblingOnce(currentId, 'prev', siblingIds);
+    if (!nextId) return null;
+    currentId = nextId;
+  }
+
+  // Then enumerate forward. This fallback is independent of graph sibling
+  // ordering and therefore survives ordering differences between mapping data
+  // and the native branch counter.
+  for (let step = 0; step < MAX_NAV_STEPS; step++) {
+    if (currentId === targetId) return currentId;
+    const controls = await getControlsForMountedSibling(currentId);
+    if (!controls) return null;
+    if (controls.current >= controls.total) break;
+
+    const nextId = await moveSiblingOnce(currentId, 'next', siblingIds);
+    if (!nextId) return null;
+    currentId = nextId;
+  }
+
+  return currentId === targetId ? currentId : null;
+}
+
+async function switchSiblingGroup(targetId, siblingIds, targetDepth, nodeMap, depthMap) {
+  const targetIndex = siblingIds.indexOf(targetId) + 1;
+  if (targetIndex <= 0) return false;
+
+  let currentId = await mountSiblingGroup(siblingIds, targetDepth, nodeMap, depthMap);
+  if (!currentId) {
+    log('warn', 'BranchNav', `Could not mount sibling group for ${targetId}`);
+    return false;
+  }
+  if (currentId === targetId) return true;
+
+  let controls = await getControlsForMountedSibling(currentId);
+  if (!controls) {
+    log('warn', 'BranchNav', `Branch controls unavailable for ${currentId}`);
+    return false;
+  }
+
+  const currentGraphIndex = siblingIds.indexOf(currentId) + 1;
+  const graphOrderMatchesUI =
+    controls.total === siblingIds.length &&
+    currentGraphIndex > 0 &&
+    currentGraphIndex === controls.current;
+
+  if (graphOrderMatchesUI) {
+    for (let step = 0; step < MAX_NAV_STEPS && currentId !== targetId; step++) {
+      controls = await getControlsForMountedSibling(currentId);
+      if (!controls) return false;
+
+      const direction = targetIndex > controls.current ? 'next' : 'prev';
+      const nextId = await moveSiblingOnce(currentId, direction, siblingIds);
+      if (!nextId) break;
+      currentId = nextId;
+
+      // If the observed ID no longer agrees with the native counter, fall back
+      // to an ID-based scan rather than trusting the graph order.
+      const observedIndex = siblingIds.indexOf(currentId) + 1;
+      const nextControls = await getControlsForMountedSibling(currentId);
+      if (!nextControls || observedIndex !== nextControls.current) break;
+    }
+
+    if (currentId === targetId) return true;
+  } else {
+    log('debug', 'BranchNav', 'Graph/UI sibling order mismatch; using ID-based branch scan', {
+      graphCount: siblingIds.length,
+      uiCount: controls.total,
+      currentGraphIndex,
+      currentUiIndex: controls.current
+    });
+  }
+
+  return !!(await scanSiblingGroupForTarget(currentId, targetId, siblingIds));
 }
 
 /**
- * 导航到指定消息
- * 这是主入口函数，处理完整的导航逻辑
- *
- * @param {string} targetId - 目标消息 ID
- * @param {Object[]} nodes - 所有节点数组
- * @returns {Promise<{ success: boolean, message: string }>}
+ * Switch the native ChatGPT control associated with one sibling group.
+ */
+export async function switchToBranchIndex(startMessageId, targetIndex) {
+  const firstControls = findBranchControls(startMessageId);
+  if (!firstControls || targetIndex < 1 || targetIndex > firstControls.total) return false;
+  if (firstControls.current === targetIndex) return true;
+
+  let currentId = startMessageId;
+  let displayed = getCurrentDisplayedPath();
+  const mountedIndex = displayed.indexOf(startMessageId);
+  if (mountedIndex < 0) return false;
+
+  for (let step = 0; step < MAX_NAV_STEPS; step++) {
+    const controls = findBranchControls(currentId);
+    if (!controls) return false;
+    if (controls.current === targetIndex) return true;
+
+    const direction = targetIndex > controls.current ? 'next' : 'prev';
+    const button = direction === 'next' ? controls.nextButton : controls.prevButton;
+    if (isDisabledButton(button)) return false;
+
+    const oldId = currentId;
+    button.click();
+    await waitForBranchChange(oldId);
+    await sleep(100);
+
+    displayed = getCurrentDisplayedPath();
+    currentId = displayed[mountedIndex];
+    if (!currentId) return false;
+  }
+
+  return findBranchControls(currentId)?.current === targetIndex;
+}
+
+/**
+ * Navigate to an arbitrary graph node by progressively enforcing each branch
+ * choice on the canonical root-to-target path.
  */
 export async function navigateToMessage(targetId, nodes) {
   log('info', 'BranchNav', `Navigating to message: ${targetId}`);
 
-  // 构建节点映射
-  const nodeMap = new Map(nodes.map(n => [n.id, n]));
-
-  // 检查目标节点是否存在
+  const nodeMap = new Map(nodes.map(node => [node.id, node]));
   if (!nodeMap.has(targetId)) {
     return { success: false, message: `Target node not found: ${targetId}` };
   }
 
-  // 构建目标路径
-  const targetPath = buildPathToTarget(targetId, nodeMap); // TODO: 检查逻辑是否正确
-  log('info', 'BranchNav', `Target path: ${targetPath.length} nodes`);
+  const targetPath = buildPathToTarget(targetId, nodeMap);
+  const depthMap = buildDepthMap(nodes);
 
-  // 获取当前显示的路径
-  let currentPath = getCurrentDisplayedPath(); // TODO: 检查逻辑是否正确
-  log('info', 'BranchNav', `Current path: ${currentPath.length} nodes`);
+  for (const nodeId of targetPath) {
+    const siblings = getSiblings(nodeId, nodeMap);
+    if (siblings.length <= 1) continue;
 
-  // 检查目标是否已经在当前路径上
-  if (currentPath.includes(targetId)) {
-    log('info', 'BranchNav', 'Target already in current path');
-    return { success: true, message: 'Already on target branch' };
-  }
+    const ok = await switchSiblingGroup(
+      nodeId,
+      siblings,
+      depthMap.get(nodeId) || 0,
+      nodeMap,
+      depthMap
+    );
 
-  // 找到分歧点：遍历目标路径，找到第一个不在当前路径上的节点
-  let divergeIndex = -1;
-  for (let i = 0; i < targetPath.length; i++) {
-    if (!currentPath.includes(targetPath[i])) {
-      divergeIndex = i;
-      break;
+    if (!ok) {
+      return { success: false, message: `Could not switch to branch containing ${nodeId}` };
     }
   }
 
-  if (divergeIndex === -1) {
-    return { success: false, message: 'Unexpected: all target ancestors in current path but target not found' };
+  let targetArticle = findArticleByMessageId(targetId);
+  if (!targetArticle || !isRendered(targetArticle)) {
+    const mounted = await mountSiblingGroup(
+      [targetId],
+      depthMap.get(targetId) || 0,
+      nodeMap,
+      depthMap
+    );
+    if (!mounted) {
+      return { success: false, message: 'Target branch selected, but target turn could not be mounted' };
+    }
+    targetArticle = findArticleByMessageId(targetId);
   }
 
-  log('info', 'BranchNav', `Divergence at index ${divergeIndex}, node: ${targetPath[divergeIndex]}`);
-
-  // 从分歧点开始，逐层切换分支
-  for (let i = divergeIndex; i < targetPath.length; i++) {
-    const targetNodeId = targetPath[i];
-    const targetNode = nodeMap.get(targetNodeId);
-
-    // 获取目标节点的所有兄弟
-    const siblings = getSiblings(targetNodeId, nodeMap);
-
-    if (siblings.length <= 1) {
-      // 没有兄弟，不需要切换，继续下一层
-      log('info', 'BranchNav', `Node ${targetNodeId.substring(0, 8)}... has no siblings, skipping`);
-      continue;
-    }
-
-    // 计算目标在兄弟中的索引（1-based）
-    const targetSiblingIndex = siblings.indexOf(targetNodeId) + 1;
-    log('info', 'BranchNav', `Target sibling index: ${targetSiblingIndex}/${siblings.length}`);
-
-    // 获取当前显示的路径
-    currentPath = getCurrentDisplayedPath();
-
-    // 找到当前显示中哪个兄弟在路径上
-    let currentSiblingId = null;
-    for (const siblingId of siblings) {
-      if (currentPath.includes(siblingId)) {
-        currentSiblingId = siblingId;
-        break;
-      }
-    }
-
-    // ================= [DEBUG START] =================
-    if (!currentSiblingId) {
-      log('warn', 'BranchNav', `🛑 No sibling found in current path! Debugging context:`);
-      
-      // 1. 打印这一层所有的兄弟 ID (State 中的数据)
-      console.group('State Data (Siblings)');
-      console.log('Target Node ID:', targetNodeId);
-      console.log('All Siblings at this level:', siblings);
-      console.groupEnd();
-
-      // 2. 打印当前页面上抓取到的所有 ID (DOM 中的数据)
-      console.group('DOM Data (Current Path)');
-      console.log('Full Current Path IDs:', currentPath);
-      // 特别打印出对应 index 的那个 DOM ID，看看它到底是谁
-      console.log(`Node at divergence index [${i}]:`, currentPath[i]); 
-      console.groupEnd();
-
-      // 3. 尝试进行模糊匹配检查 (帮助排查是否是格式问题)
-      const likelyMatch = siblings.find(sId => 
-        currentPath.some(pId => pId && (pId.includes(sId) || sId.includes(pId)))
-      );
-      if (likelyMatch) {
-        console.warn(`💡 HINT: Found a potential fuzzy match! State: "${likelyMatch}" vs DOM. Check ID format.`);
-      } else {
-        console.warn(`❌ No fuzzy match found either.`);
-      }
-    }
-    // ================= [DEBUG END] =================
-
-    if (!currentSiblingId) {
-      log('warn', 'BranchNav', `No sibling found in current path for target ${targetNodeId.substring(0, 8)}...`);
-      // 尝试继续，可能已经在正确路径上
-      continue;
-    }
-
-    // 检查是否已经在目标分支
-    if (currentSiblingId === targetNodeId) {
-      log('info', 'BranchNav', `Already on target sibling at this level`);
-      continue;
-    }
-
-    // 获取当前兄弟的分支信息
-    const branchInfo = getBranchInfo(currentSiblingId);
-    if (!branchInfo) {
-      log('warn', 'BranchNav', `No branch info for ${currentSiblingId.substring(0, 8)}...`);
-      continue;
-    }
-
-    log('info', 'BranchNav', `Switching from ${branchInfo.current}/${branchInfo.total} to ${targetSiblingIndex}`);
-
-    // 计算需要点击的次数和方向
-    const diff = targetSiblingIndex - branchInfo.current;
-    if (diff === 0) {
-      log('info', 'BranchNav', 'Already on correct branch index');
-      continue;
-    }
-
-    const direction = diff > 0 ? 'next' : 'prev';
-    const clicks = Math.abs(diff);
-
-    log('info', 'BranchNav', `Need ${clicks} clicks ${direction}`);
-
-    // 执行点击
-    for (let c = 0; c < clicks; c++) {
-      // 重新获取当前路径（每次点击后 DOM 会变化）
-      currentPath = getCurrentDisplayedPath();
-
-      // 重新找当前兄弟
-      let currentTurnId = null;
-      for (const siblingId of siblings) {
-        if (currentPath.includes(siblingId)) {
-          currentTurnId = siblingId;
-          break;
-        }
-      }
-
-      if (!currentTurnId) {
-        // 可能已经切换了，直接用第一个显示的节点
-        currentTurnId = currentPath[0];
-      }
-
-      if (!clickBranchButton(currentTurnId, direction)) {
-        log('error', 'BranchNav', `Failed to click ${direction} at step ${c + 1}`);
-        return { success: false, message: `Failed to click ${direction} button` };
-      }
-
-      // 等待 DOM 更新
-      try {
-        await waitForBranchChange(currentTurnId, 2000);
-        await new Promise(resolve => setTimeout(resolve, 150));
-      } catch (error) {
-        log('error', 'BranchNav', `Error waiting for change: ${error.message}`);
-        return { success: false, message: error.message };
-      }
-    }
-
-    // 等待稳定
-    await new Promise(resolve => setTimeout(resolve, 200));
+  if (!targetArticle || !isRendered(targetArticle)) {
+    return { success: false, message: 'Target message is still not rendered' };
   }
 
-  // 最终验证
-  currentPath = getCurrentDisplayedPath();
-  if (currentPath.includes(targetId)) {
-    log('info', 'BranchNav', 'Navigation successful!');
-    return { success: true, message: 'Navigation successful' };
-  } else {
-    log('warn', 'BranchNav', 'Target not in final path after navigation');
-    return { success: false, message: 'Navigation completed but target is still not displayed' };
-  }
+  return { success: true, message: 'Navigation successful' };
 }
