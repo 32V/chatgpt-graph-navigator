@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
 
 const ROOT = process.cwd();
+const REPORT_PATH = join(ROOT, 'scripts', 'han-residual-report.txt');
 const HAN = /\p{Script=Han}/u;
 const TEXT_EXTENSIONS = new Set(['.js', '.mjs', '.jsx', '.css', '.html', '.md', '.json', '.yml', '.yaml']);
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'release', 'release-screenshots']);
@@ -60,13 +61,12 @@ function stripJsLikeComments(source) {
     }
 
     out += ch;
-    if (ch === '\\') {
-      if (i + 1 < source.length) {
-        out += source[i + 1];
-        i += 2;
-        continue;
-      }
-    } else if (ch === quote) {
+    if (ch === '\\' && i + 1 < source.length) {
+      out += source[i + 1];
+      i += 2;
+      continue;
+    }
+    if (ch === quote) {
       state = 'code';
       quote = '';
     }
@@ -80,18 +80,22 @@ function stripHtmlComments(source) {
   return source.replace(/<!--[\s\S]*?-->/g, comment => HAN.test(comment) ? '' : comment);
 }
 
-const files = walk(ROOT);
+function asciiEscape(value) {
+  return Array.from(value).map((char) => {
+    const codePoint = char.codePointAt(0);
+    return codePoint > 0x7f ? `\\u{${codePoint.toString(16)}}` : char;
+  }).join('');
+}
+
+const files = walk(ROOT).filter(path => path !== REPORT_PATH);
 const residual = [];
 let changed = 0;
 
 for (const path of files) {
   const rel = relative(ROOT, path).replaceAll('\\', '/');
-  let source = readFileSync(path, 'utf8');
+  const source = readFileSync(path, 'utf8');
   let next = source;
 
-  // These two labels were legacy multilingual fallbacks. The navigator also has
-  // semantic English labels and an ID/position fallback, so removing them does
-  // not change branch-switch behavior for the supported UI.
   if (rel === 'src/content/utils/branch-navigator.js') {
     next = next.replace('|上一', '').replace('|下一', '');
   }
@@ -113,10 +117,10 @@ for (const path of files) {
   });
 }
 
+const report = residual.length
+  ? residual.map(asciiEscape).join('\n') + '\n'
+  : 'No Han text remains.\n';
+writeFileSync(REPORT_PATH, report);
+
 console.log(`English cleanup updated ${changed} file(s).`);
-if (residual.length) {
-  console.log('Remaining Han text requires manual review:');
-  residual.forEach(line => console.log(line));
-} else {
-  console.log('No Han text remains.');
-}
+console.log(residual.length ? `Remaining Han lines: ${residual.length}` : 'No Han text remains.');
