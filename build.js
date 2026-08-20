@@ -52,10 +52,17 @@ const reactOptions = {
     '.js': 'jsx',
     '.jsx': 'jsx'
   },
-  jsx: 'automatic',  // 使用 React 17+ 的自动 JSX 运行时
+  jsx: 'automatic',  // 使用 React 17+ 的 자동 JSX 运行时
 };
 
 const builds = [
+  // Early MAIN-world compatibility script. It must be a standalone bundle so
+  // manifest.json can inject it at document_start before ChatGPT bootstraps.
+  {
+    ...commonOptions,
+    entryPoints: ['src/content/compat/edit-pagination-compat.js'],
+    outfile: 'dist/edit-pagination-compat.js'
+  },
   // Content Script (不需要 React)
   {
     ...commonOptions,
