@@ -39,6 +39,17 @@
         "https://chat.openai.com/*"
       ],
       "js": [
+        "dist/edit-pagination-compat.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
         "dist/content.js"
       ],
       "run_at": "document_idle"
