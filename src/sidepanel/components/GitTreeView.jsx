@@ -1,15 +1,4 @@
-/**
- * Git-tree style QA view.
- *
- * Requirements implemented:
- * - Two modes switchable (done in Header/App)
- * - Git-tree mode is more直观, supports click-jump
- * - Default only show Q nodes; only show A nodes when a Q has multiple answers.
- * - If a Q has a single answer, show an inline answer preview instead of an A node.
- * - Search filter (Q/A) for practicality
- * - One-key toggle: show All / only Q / only A
- * - Default expand ALL branches
- */
+
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 

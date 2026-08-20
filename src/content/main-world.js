@@ -1,7 +1,4 @@
-/**
- * ChatGPT Graph Extension - Main World Script
- * 此脚本运行在页面的 main world 中，可以拦截页面的 fetch 请求
- */
+
 
 (function() {
   'use strict';
@@ -11,11 +8,11 @@
   let capturedToken = null;
   const originalFetch = window.fetch.bind(window);
 
-  // 创建拦截函数
+  
   const interceptedFetch = function(...args) {
     const [url, options] = args;
 
-    // 尝试从请求中提取 authorization header
+    
     try {
       if (options && options.headers && url && url.includes('/backend-api/')) {
         const headers = options.headers;
@@ -37,7 +34,7 @@
               url: url.split('?')[0]
             });
 
-            // 通过 window.postMessage 发送到 isolated world
+            
             window.postMessage({
               type: 'CHATGPT_GRAPH_TOKEN',
               token: token,
@@ -53,7 +50,7 @@
     return originalFetch(...args);
   };
 
-  // 使用 Object.defineProperty 使 fetch 不可被覆盖
+  
   try {
     Object.defineProperty(window, 'fetch', {
       value: interceptedFetch,
@@ -62,13 +59,13 @@
     });
     console.log('[ChatGPT Graph][MainWorld] ✓ Fetch interceptor installed (non-writable)');
   } catch (e) {
-    // 如果 defineProperty 失败（已经被定义为 non-configurable），尝试直接赋值
+    
     console.warn('[ChatGPT Graph][MainWorld] Failed to use defineProperty, using assignment:', e.message);
     window.fetch = interceptedFetch;
     console.log('[ChatGPT Graph][MainWorld] ✓ Fetch interceptor installed (writable)');
   }
 
-  // 测试拦截器是否工作
+  
   console.log('[ChatGPT Graph][MainWorld] Interceptor test:', {
     fetchType: typeof window.fetch,
     fetchString: window.fetch.toString().substring(0, 100),

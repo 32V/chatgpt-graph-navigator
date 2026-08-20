@@ -1,12 +1,9 @@
-/**
- * Side Panel 样式
- * 现代化、类似 NotebookLM 的设计
- */
 
-/* React Flow 基础样式（必须在最前面引入，@import 必须在所有普通规则之前） */
+
+
 @import "@xyflow/react/dist/style.css";
 
-/* ==================== 基础重置 ==================== */
+
 * {
   margin: 0;
   padding: 0;
@@ -30,7 +27,7 @@ html, body {
   overflow: hidden;
 }
 
-/* ==================== 应用布局 ==================== */
+
 .app {
   width: 100%;
   height: 100%;
@@ -39,7 +36,7 @@ html, body {
   overflow: hidden;
 }
 
-/* ==================== 头部 ==================== */
+
 /*
   Minimal toolbar (buttons only)
   - responsive (no clipped controls)
@@ -244,7 +241,7 @@ html, body {
   to { transform: rotate(360deg); }
 }
 
-/* ==================== 主内容区 ==================== */
+
 .main-content {
   flex: 1;
   position: relative;
@@ -252,7 +249,7 @@ html, body {
   min-height: 0;
 }
 
-/* ==================== 图谱容器 ==================== */
+
 .graph-container {
   width: 100%;
   height: 100%;
@@ -260,7 +257,7 @@ html, body {
   background: #fafafa;
 }
 
-/* React Flow 覆盖样式 */
+
 .react-flow {
   width: 100% !important;
   height: 100% !important;
@@ -290,11 +287,7 @@ html, body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-/* ==================== ConversationGraph MiniMap（小地图）增强 ====================
- * - 悬浮窗模式默认隐藏（由 React 逻辑控制）
- * - 侧边栏模式默认更小 + 底部显示（由 React 逻辑控制）
- * - 侧边栏模式支持拖动：仅顶部 handle 区域可拖动
- */
+
 .cg-minimap {
   border-radius: 8px;
 }
@@ -369,7 +362,7 @@ html, body {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
 }
 
-/* ==================== Round 节点样式 ==================== */
+
 .round-node {
   min-width: 200px;
   max-width: 240px;
@@ -397,7 +390,7 @@ html, body {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-/* 节点头部 */
+
 .node-header {
   display: flex;
   justify-content: space-between;
@@ -436,7 +429,7 @@ html, body {
   color: #334155;
 }
 
-/* 节点内容 */
+
 .node-content {
   display: flex;
   flex-direction: column;
@@ -471,14 +464,14 @@ html, body {
   color: #334155;
   word-break: break-word;
 
-  /* 防止节点因为文本过长而无限变高（dagre 使用固定高度计算布局） */
+  
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
 
-/* 收起状态 */
+
 .node-collapsed {
   text-align: center;
   padding: 4px;
@@ -486,7 +479,7 @@ html, body {
   font-size: 14px;
 }
 
-/* 分支指示器 */
+
 .branch-indicator {
   position: absolute;
   top: -8px;
@@ -500,7 +493,7 @@ html, body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-/* 连接点 */
+
 .react-flow__handle {
   width: 8px;
   height: 8px;
@@ -508,7 +501,7 @@ html, body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
-/* ==================== 空状态 ==================== */
+
 .empty-state {
   position: absolute;
   top: 0;
@@ -545,7 +538,7 @@ html, body {
   max-width: 280px;
 }
 
-/* ==================== 错误状态 ==================== */
+
 .error-message {
   position: absolute;
   top: 0;
@@ -580,7 +573,7 @@ html, body {
   background: #2563eb;
 }
 
-/* ==================== QA 节点样式 ==================== */
+
 .qa-node {
   min-width: 220px;
   max-width: 240px;
@@ -604,7 +597,7 @@ html, body {
   box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.3);
 }
 
-/* 问题节点 - 蓝色系 */
+
 .qa-node.question {
   background: #dbeafe;
   border-color: #93c5fd;
@@ -615,7 +608,7 @@ html, body {
   border-color: #3b82f6;
 }
 
-/* 回答节点 - 绿色系 */
+
 .qa-node.answer {
   background: #dcfce7;
   border-color: #86efac;
@@ -626,7 +619,7 @@ html, body {
   border-color: #22c55e;
 }
 
-/* QA 节点头部 */
+
 .qa-node-header {
   display: flex;
   align-items: center;
@@ -680,7 +673,7 @@ html, body {
   color: #334155;
 }
 
-/* QA 节点内容 */
+
 .qa-node-content {
   min-height: 20px;
 }
@@ -692,7 +685,7 @@ html, body {
   word-break: break-word;
   margin: 0;
 
-  /* 限制行数防止节点过高 */
+  
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
@@ -704,7 +697,7 @@ html, body {
   font-style: italic;
 }
 
-/* 选中路径指示器 */
+
 .qa-node-path-indicator {
   position: absolute;
   left: 0;
@@ -716,7 +709,7 @@ html, body {
   border-radius: 0 2px 2px 0;
 }
 
-/* 展开回答按钮 */
+
 .qa-node-expand-answer-btn {
   width: 20px;
   height: 20px;
@@ -748,7 +741,7 @@ html, body {
   background: #475569;
 }
 
-/* 内联回答展示（在 Q 节点内部） */
+
 .qa-node-inline-answer {
   margin-top: 8px;
   padding: 8px 10px;
@@ -782,12 +775,12 @@ html, body {
   -webkit-line-clamp: 4;
 }
 
-/* Q 节点展开回答后的样式调整 */
+
 .qa-node.answer-expanded {
   max-width: 280px;
 }
 
-/* 折叠的回答预览 */
+
 .qa-node-collapsed-answer {
   display: flex;
   align-items: flex-start;
@@ -814,7 +807,7 @@ html, body {
   overflow: hidden;
 }
 
-/* ==================== 起始节点样式 ==================== */
+
 .start-node {
   display: flex;
   align-items: center;
@@ -1478,7 +1471,7 @@ html, body {
   text-align: center;
 }
 
-/* ==================== 响应式调整 ==================== */
+
 @media (max-width: 400px) {
   .round-node {
     min-width: 160px;
