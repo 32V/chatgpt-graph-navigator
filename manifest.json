@@ -48,7 +48,7 @@
         "https://chat.openai.com/*"
       ],
       "css": [
-        "dist/docked-panel-theme.css"
+        "dist/docked-panel.css"
       ],
       "js": [
         "dist/docked-panel.js",
