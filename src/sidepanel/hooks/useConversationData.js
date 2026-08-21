@@ -2,21 +2,23 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { MESSAGE_TYPES } from '../../shared/constants.js';
 import { sendMessageToTabWithFallback } from '../../shared/tab-messaging.js';
 
-const CONVERSATION_ID_REGEX = /\/c\/([a-f0-9-]+)/;
+const CONVERSATION_ID_REGEX = /\/c\/([a-f0-9-]+)/i;
 
-function queryActiveTab() {
-  return new Promise((resolve) => {
-    try {
-      chrome.tabs.query({ active: true, currentWindow: true }, tabs => resolve(tabs || []));
-    } catch {
-      resolve([]);
-    }
-  });
+async function queryActiveTab() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab || null;
+  } catch {
+    return null;
+  }
 }
 
-async function getActiveConversationIdFromTab() {
-  const [tab] = await queryActiveTab();
-  return (tab?.url || '').match(CONVERSATION_ID_REGEX)?.[1] || null;
+function conversationIdFromUrl(url = '') {
+  return String(url).match(CONVERSATION_ID_REGEX)?.[1] || null;
+}
+
+async function getActiveConversationId() {
+  return conversationIdFromUrl((await queryActiveTab())?.url);
 }
 
 async function sendRuntimeMessage(message) {
@@ -27,20 +29,11 @@ async function sendRuntimeMessage(message) {
 function transformToGraphData(payload) {
   if (!payload) return null;
   const conversation = payload.conversation || payload;
-  const nodes = payload.nodes || conversation.nodes || [];
-  const edges = payload.edges || conversation.edges || [];
-
   return {
     id: conversation.id,
-    title: conversation.title || 'Untitled Conversation',
     currentNodeId: conversation.currentNodeId || null,
-    nodes,
-    edges,
-    updatedAt: conversation.updateTime || Date.now(),
-    stats: {
-      totalNodes: nodes.length || conversation.nodeCount || 0,
-      totalEdges: edges.length || conversation.edgeCount || 0
-    }
+    nodes: payload.nodes || conversation.nodes || [],
+    edges: payload.edges || conversation.edges || []
   };
 }
 
@@ -49,32 +42,30 @@ export function useConversationData() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [currentNodeId, setCurrentNodeId] = useState(null);
-  const [activeConversationId, setActiveConversationId] = useState(null);
 
   const activeConversationRef = useRef(null);
   const pendingRefreshes = useRef(new Set());
 
-  const setActiveConversation = useCallback((conversationId) => {
-    activeConversationRef.current = conversationId;
-    setActiveConversationId(conversationId);
-  }, []);
-
   const triggerContentRefresh = useCallback(async (conversationId) => {
     if (!conversationId || pendingRefreshes.current.has(conversationId)) return;
 
-    const [tab] = await queryActiveTab();
-    if (!tab?.id) return;
+    const tab = await queryActiveTab();
+    if (!tab?.id || conversationIdFromUrl(tab.url) !== conversationId) return;
 
     pendingRefreshes.current.add(conversationId);
     const timeout = setTimeout(() => pendingRefreshes.current.delete(conversationId), 5000);
 
     try {
-      await sendMessageToTabWithFallback(tab.id, {
+      const response = await sendMessageToTabWithFallback(tab.id, {
         type: MESSAGE_TYPES.REFRESH_DATA,
         payload: { conversationId }
       });
-    } catch (error) {
-      console.warn('[Panel] Content refresh failed:', error?.message);
+      if (response?.success === false) {
+        pendingRefreshes.current.delete(conversationId);
+        clearTimeout(timeout);
+      }
+    } catch (refreshError) {
+      console.warn('[Panel] Content refresh failed:', refreshError?.message);
       pendingRefreshes.current.delete(conversationId);
       clearTimeout(timeout);
     }
@@ -99,49 +90,58 @@ export function useConversationData() {
         payload: { conversationId }
       });
 
+      // A route change may complete while this IndexedDB request is in flight.
+      if (activeConversationRef.current !== conversationId) return;
+
       if (response?.success && response.data) {
         const graphData = transformToGraphData(response.data);
         pendingRefreshes.current.delete(conversationId);
         setConversationData(graphData);
         setCurrentNodeId(graphData.currentNodeId);
-        setActiveConversation(conversationId);
-      } else {
-        setConversationData(null);
-        if (requestIfMissing) void triggerContentRefresh(conversationId);
+        return;
       }
+
+      setConversationData(null);
+      if (requestIfMissing) void triggerContentRefresh(conversationId);
     } catch (fetchError) {
+      if (activeConversationRef.current !== conversationId) return;
       console.error('[Panel] Failed to fetch conversation:', fetchError);
       setConversationData(null);
       setError(fetchError.message || 'Failed to load conversation data');
     } finally {
-      setIsLoading(false);
+      if (activeConversationRef.current === conversationId) setIsLoading(false);
     }
-  }, [setActiveConversation, triggerContentRefresh]);
+  }, [triggerContentRefresh]);
 
   const syncWithActiveTab = useCallback(async () => {
-    const conversationId = await getActiveConversationIdFromTab();
+    const conversationId = await getActiveConversationId();
+    if (conversationId === activeConversationRef.current) return;
+
+    activeConversationRef.current = conversationId;
+    setConversationData(null);
+    setCurrentNodeId(null);
+    setError(null);
 
     if (!conversationId) {
-      setActiveConversation(null);
-      setConversationData(null);
-      setCurrentNodeId(null);
       setIsLoading(false);
       return;
     }
 
-    if (conversationId !== activeConversationRef.current) {
-      setActiveConversation(conversationId);
-      setCurrentNodeId(null);
-      await fetchConversation(conversationId);
-    }
-  }, [fetchConversation, setActiveConversation]);
+    setIsLoading(true);
+    await fetchConversation(conversationId);
+  }, [fetchConversation]);
 
   const refreshData = useCallback(async () => {
-    const conversationId = await getActiveConversationIdFromTab();
+    const conversationId = await getActiveConversationId();
     if (!conversationId) return;
-    setActiveConversation(conversationId);
+
+    if (activeConversationRef.current !== conversationId) {
+      activeConversationRef.current = conversationId;
+      setConversationData(null);
+      setCurrentNodeId(null);
+    }
     await triggerContentRefresh(conversationId);
-  }, [setActiveConversation, triggerContentRefresh]);
+  }, [triggerContentRefresh]);
 
   useEffect(() => {
     const handleMessage = (message) => {
@@ -184,7 +184,6 @@ export function useConversationData() {
     error,
     refreshData,
     currentNodeId,
-    setCurrentNodeId,
-    activeConversationId
+    setCurrentNodeId
   };
 }
