@@ -60,12 +60,12 @@ jobs:
           test -f release/dist/setup.js
           test -f release/dist/sidepanel.js
           test -f release/dist/sidepanel.css
-          test -f release/dist/chatgpt-theme.css
-          test -f release/dist/graph-ux.css
           test -f release/src/popup/index.html
           test -f release/src/setup/index.html
           test -f release/src/sidepanel/index.html
           test ! -d release/_locales
+          test ! -f release/dist/chatgpt-theme.css
+          test ! -f release/dist/graph-ux.css
           node -e "JSON.parse(require('fs').readFileSync('release/manifest.json', 'utf8')); console.log('manifest.json is valid JSON')"
 
       - name: Upload ready-to-load extension
