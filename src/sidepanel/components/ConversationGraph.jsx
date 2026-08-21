@@ -72,9 +72,7 @@ function GraphContent({
       if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
         return { x: parsed.x, y: parsed.y };
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
     return { x: 0, y: 0 };
   });
 
@@ -195,6 +193,7 @@ function GraphContent({
     const layouted = buildAndLayoutQATree(qaTree, selectedPath, 'TB', expandedQNodes);
     setNodes(layouted.nodes.map(node => ({
       ...node,
+      selected: Boolean(currentNodeId && node.data?.nodeId === currentNodeId),
       data: {
         ...node.data,
         onExpandAnswer: handleExpandAnswer
@@ -208,7 +207,16 @@ function GraphContent({
       }, 80);
       return () => clearTimeout(timer);
     }
-  }, [qaTree, selectedPath, expandedQNodes, setNodes, setEdges, fitView, handleExpandAnswer]);
+  }, [
+    qaTree,
+    selectedPath,
+    currentNodeId,
+    expandedQNodes,
+    setNodes,
+    setEdges,
+    fitView,
+    handleExpandAnswer
+  ]);
 
   const focusNode = useCallback((node) => {
     if (!node) return;
