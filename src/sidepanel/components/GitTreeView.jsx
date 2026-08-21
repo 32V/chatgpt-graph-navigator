@@ -18,8 +18,7 @@ function highlight(text, query) {
   const normalized = normalizeText(text);
   if (!query) return normalized;
 
-  const lower = normalized.toLowerCase();
-  const index = lower.indexOf(query);
+  const index = normalized.toLowerCase().indexOf(query);
   if (index < 0) return normalized;
 
   return (
@@ -101,27 +100,6 @@ function getNextAnswersFromAnswer(aNode) {
   );
 }
 
-function useStoredState(key, initialValue, validate) {
-  const [value, setValue] = useState(initialValue);
-
-  useEffect(() => {
-    chrome.storage.local.get([key]).then((result) => {
-      const stored = result?.[key];
-      if (validate(stored)) setValue(stored);
-    }).catch(() => {});
-  }, [key, validate]);
-
-  useEffect(() => {
-    chrome.storage.local.set({ [key]: value }).catch(() => {});
-  }, [key, value]);
-
-  return [value, setValue];
-}
-
-const validateDisplayMode = value => value === 'all' || value === 'q' || value === 'a';
-const validateBoolean = value => typeof value === 'boolean';
-const validateFontScale = value => Number.isFinite(Number(value));
-
 export default function GitTreeView({
   qaTree,
   selectedPath,
@@ -134,30 +112,50 @@ export default function GitTreeView({
   isLoading
 }) {
   const containerRef = useRef(null);
-  const searchInputRef = useRef(null);
   const initializedStructureRef = useRef(null);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [displayMode, setDisplayMode] = useStoredState(
-    'gitTreeDisplayMode',
-    'all',
-    validateDisplayMode
-  );
-  const [toolbarCollapsed, setToolbarCollapsed] = useStoredState(
-    'gitTreeToolbarCollapsed',
-    false,
-    validateBoolean
-  );
-  const [storedFontScale, setStoredFontScale] = useStoredState(
-    'gitTreeFontScale',
-    1,
-    validateFontScale
-  );
-  const fontScale = Math.min(1.35, Math.max(0.85, Number(storedFontScale) || 1));
-  const setFontScale = useCallback((value) => {
-    setStoredFontScale(Math.min(1.35, Math.max(0.85, Number(value) || 1)));
-  }, [setStoredFontScale]);
+  const [displayMode, setDisplayModeState] = useState('all');
+  const [toolbarCollapsed, setToolbarCollapsedState] = useState(false);
+  const [fontScale, setFontScaleState] = useState(1);
   const [expanded, setExpanded] = useState(() => new Set());
+
+  useEffect(() => {
+    chrome.storage.local.get([
+      'gitTreeDisplayMode',
+      'gitTreeToolbarCollapsed',
+      'gitTreeFontScale'
+    ]).then((result) => {
+      if (result.gitTreeDisplayMode === 'all' || result.gitTreeDisplayMode === 'q' || result.gitTreeDisplayMode === 'a') {
+        setDisplayModeState(result.gitTreeDisplayMode);
+      }
+      if (typeof result.gitTreeToolbarCollapsed === 'boolean') {
+        setToolbarCollapsedState(result.gitTreeToolbarCollapsed);
+      }
+      const scale = Number(result.gitTreeFontScale);
+      if (Number.isFinite(scale)) {
+        setFontScaleState(Math.min(1.35, Math.max(0.85, scale)));
+      }
+    }).catch(() => {});
+  }, []);
+
+  const setDisplayMode = useCallback((mode) => {
+    if (mode !== 'all' && mode !== 'q' && mode !== 'a') return;
+    setDisplayModeState(mode);
+    chrome.storage.local.set({ gitTreeDisplayMode: mode }).catch(() => {});
+  }, []);
+
+  const setToolbarCollapsed = useCallback((collapsed) => {
+    const next = Boolean(collapsed);
+    setToolbarCollapsedState(next);
+    chrome.storage.local.set({ gitTreeToolbarCollapsed: next }).catch(() => {});
+  }, []);
+
+  const setFontScale = useCallback((value) => {
+    const next = Math.min(1.35, Math.max(0.85, Number(value) || 1));
+    setFontScaleState(next);
+    chrome.storage.local.set({ gitTreeFontScale: next }).catch(() => {});
+  }, []);
 
   const query = useMemo(() => normalizeText(searchQuery).toLowerCase(), [searchQuery]);
   const searchIndex = useMemo(
@@ -228,7 +226,8 @@ export default function GitTreeView({
       const root = containerRef.current?.querySelector('.git-root');
       if (!root) return;
 
-      const element = root.querySelector(`[data-node-id="${CSS.escape(currentNodeId)}"]`);
+      const escapedId = window.CSS?.escape ? window.CSS.escape(currentNodeId) : currentNodeId.replace(/["\\]/g, '\\$&');
+      const element = root.querySelector(`[data-node-id="${escapedId}"]`);
       if (!element) {
         if (attempt < 5) requestAnimationFrame(() => scrollToCurrent(attempt + 1));
         return;
@@ -361,7 +360,7 @@ export default function GitTreeView({
 
         {childInfo.mode === 'collapsedAnswer' && childInfo.answer?.assistantId && (
           <div
-            className={`git-inline-answer${selectedPath?.has(childInfo.answer.assistantId) ? ' git-inline-selected' : ''}${matchSet.has(childInfo.answer.assistantId) ? ' git-inline-matched' : ''}`}
+            className={`git-inline-answer${selectedPath?.has(childInfo.answer.assistantId) ? ' git-inline-selected' : ''}${currentNodeId === childInfo.answer.assistantId ? ' git-current' : ''}${matchSet.has(childInfo.answer.assistantId) ? ' git-inline-matched' : ''}`}
             data-node-id={childInfo.answer.assistantId}
             onClick={(event) => {
               event.stopPropagation();
@@ -549,7 +548,6 @@ export default function GitTreeView({
             <div className="git-search">
               <img src={iconUrl('search.svg')} alt="" className="git-search-icon" />
               <input
-                ref={searchInputRef}
                 className="git-search-input"
                 value={searchQuery}
                 onChange={event => setSearchQuery(event.target.value)}
