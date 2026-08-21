@@ -5,11 +5,14 @@
 import { MESSAGE_TYPES } from '../../shared/constants.js';
 import { sendMessageToTabWithFallback } from '../../shared/tab-messaging.js';
 import { db } from '../database/db.js';
-import { getTokenStatus, clearToken } from '../auth/token-capture.js';
+import { clearToken } from '../auth/token-capture.js';
 
 export function setupMessageListener() {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    handleMessage(message, sender)
+    const task = handleMessage(message, sender);
+    if (!task) return false;
+
+    task
       .then(result => sendResponse({ success: true, data: result }))
       .catch(error => {
         console.error('[Background] Message handler error:', error);
@@ -19,8 +22,8 @@ export function setupMessageListener() {
   });
 }
 
-async function handleMessage(message, sender) {
-  const { type, payload } = message;
+function handleMessage(message, sender) {
+  const { type, payload } = message || {};
 
   switch (type) {
     case MESSAGE_TYPES.CONVERSATION_LOADED:
@@ -31,17 +34,16 @@ async function handleMessage(message, sender) {
       return handleScrollToMessage(payload);
     case MESSAGE_TYPES.ERROR:
       console.error('[Background] Error from content script:', payload, sender);
-      return { acknowledged: true };
-    case MESSAGE_TYPES.GET_TOKEN_STATUS:
-      return getTokenStatus();
+      return Promise.resolve({ acknowledged: true });
     case MESSAGE_TYPES.CLEAR_TOKEN:
-      return { success: await clearToken() };
+      return clearToken().then(success => ({ success }));
     default:
-      throw new Error(`Unknown message type: ${type}`);
+      return null;
   }
 }
 
 async function handleConversationLoaded(conversationData) {
+  if (!conversationData?.id) throw new Error('Missing conversation data');
   await db.saveFullConversation(conversationData);
 
   await notifyPanel(MESSAGE_TYPES.DATA_READY, {
@@ -53,10 +55,7 @@ async function handleConversationLoaded(conversationData) {
     }
   });
 
-  return {
-    message: 'Conversation saved successfully',
-    conversationId: conversationData.id
-  };
+  return { conversationId: conversationData.id };
 }
 
 async function handleGetConversation(payload) {
