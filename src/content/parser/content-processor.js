@@ -1,38 +1,32 @@
 /**
  * Converts structured ChatGPT message content into readable graph text.
  */
+
 import { log } from '../../shared/utils.js';
 
-const CONTENT_PROCESSORS = {
-  image_asset_pointer: (part) => {
-    const pointer = part.asset_pointer || '';
-    const title = part.metadata?.dalle?.prompt ||
-      part.metadata?.generation?.serialization_title ||
-      part.metadata?.image_gen_title ||
-      'Image';
-    const width = part.width || part.metadata?.container_pixel_width;
-    const height = part.height || part.metadata?.container_pixel_height;
-    const sizeInfo = width && height ? ` (${width}x${height})` : '';
-    return `[Image: ${title}${sizeInfo}](${pointer})`;
-  }
-};
+function processImage(part) {
+  const pointer = part.asset_pointer || '';
+  const title = part.metadata?.dalle?.prompt ||
+    part.metadata?.generation?.serialization_title ||
+    part.metadata?.image_gen_title ||
+    'Image';
+  const width = part.width || part.metadata?.container_pixel_width;
+  const height = part.height || part.metadata?.container_pixel_height;
+  const sizeInfo = width && height ? ` (${width}x${height})` : '';
+  return `[Image: ${title}${sizeInfo}](${pointer})`;
+}
 
 function processPart(part) {
   if (!part) return '';
   if (typeof part === 'string') return part;
-
-  if (Array.isArray(part)) {
-    return part.map(processPart).filter(Boolean).join('');
-  }
-
+  if (Array.isArray(part)) return part.map(processPart).filter(Boolean).join('');
   if (typeof part !== 'object') return '';
 
-  const processor = CONTENT_PROCESSORS[part.content_type];
-  if (processor) {
+  if (part.content_type === 'image_asset_pointer') {
     try {
-      return processor(part);
+      return processImage(part);
     } catch (error) {
-      log('warn', 'ContentProcessor', `Failed to process ${part.content_type}:`, error);
+      log('warn', 'ContentProcessor', 'Failed to process image content:', error);
       return '';
     }
   }
@@ -59,23 +53,4 @@ export function processContent(content) {
 
 export function hasValidContent(content) {
   return processContent(content).trim().length > 0;
-}
-
-export function hasContentType(content, contentType) {
-  if (!content || typeof content !== 'object') return false;
-  if (Array.isArray(content.parts)) {
-    return content.parts.some(part => typeof part === 'object' && part?.content_type === contentType);
-  }
-  return content.content_type === contentType;
-}
-
-export function registerProcessor(contentType, processor) {
-  if (typeof processor !== 'function') {
-    throw new TypeError('Content processor must be a function');
-  }
-  CONTENT_PROCESSORS[contentType] = processor;
-}
-
-export function getRegisteredTypes() {
-  return Object.keys(CONTENT_PROCESSORS);
 }
