@@ -27,21 +27,159 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Normalize package lock metadata
+      - name: Normalize cleanup tree
         id: normalize
         shell: bash
         run: |
           set -euo pipefail
           npm install --package-lock-only --ignore-scripts
-          if git diff --quiet -- package-lock.json; then
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/sidepanel/styles/index.css')
+          text = path.read_text()
+
+          replacements = [
+              ('''/* Standalone panel toolbar. The in-page dock supplies its own outer header. */
+          .header {
+            min-height: 44px;
+            padding: 7px 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+            flex: 0 0 auto;
+            background: var(--cg-bg);
+            border-bottom: 1px solid var(--cg-border-subtle);
+          }
+
+          .header-toolbar-left,
+          .header-toolbar-right {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+          }
+
+          ''', ''),
+              ('''.view-toggle,
+          .git-filter-toggle,
+          .git-font-control {''', '''.git-filter-toggle,
+          .git-font-control {'''),
+              ('''.view-toggle-btn,
+          .icon-btn,
+          .minimap-btn,
+          .refresh-btn,
+          .git-collapse-btn,
+          .git-filter-btn,
+          .git-search-clear,
+          .git-toolbar-reopen {''', '''.git-collapse-btn,
+          .git-filter-btn,
+          .git-search-clear,
+          .git-toolbar-reopen {'''),
+              ('''.view-toggle-btn,
+          .icon-btn,
+          .minimap-btn,
+          .refresh-btn,
+          .git-collapse-btn {''', '''.git-collapse-btn {'''),
+              ('''.view-toggle-btn:hover,
+          .icon-btn:hover,
+          .minimap-btn:hover,
+          .refresh-btn:hover,
+          .git-collapse-btn:hover,
+          .git-filter-btn:hover,
+          .git-search-clear:hover,
+          .git-toolbar-reopen:hover {''', '''.git-collapse-btn:hover,
+          .git-filter-btn:hover,
+          .git-search-clear:hover,
+          .git-toolbar-reopen:hover {'''),
+              ('''.view-toggle-btn.active,
+          .icon-btn.active,
+          .minimap-btn.active,
+          .git-filter-btn.active {''', '''.git-filter-btn.active {'''),
+              ('''.view-toggle-btn:disabled,
+          .icon-btn:disabled,
+          .minimap-btn:disabled,
+          .refresh-btn:disabled,
+          .git-collapse-btn:disabled {
+            opacity: .42;
+            cursor: default;
+          }
+
+          ''', ''),
+              ('''.spinning {
+            display: inline-flex;
+            animation: cg-spin .8s linear infinite;
+          }
+
+          @keyframes cg-spin {
+            to { transform: rotate(360deg); }
+          }
+
+          ''', ''),
+              ('''.cg-minimap-draggable {
+            user-select: none;
+          }
+
+          .cg-minimap-draggable::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 0;
+            height: 18px;
+            background: linear-gradient(to bottom, color-mix(in srgb, var(--cg-text) 10%, transparent), transparent);
+            pointer-events: none;
+          }
+
+          .cg-minimap-draggable::after {
+            content: '⋮⋮';
+            position: absolute;
+            top: 2px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: var(--cg-text-tertiary);
+            font-size: 11px;
+            letter-spacing: 2px;
+            line-height: 1;
+            pointer-events: none;
+          }
+
+          .cg-minimap-draggable:hover { cursor: grab; }
+          .cg-minimap-dragging { cursor: grabbing !important; }
+
+          ''', ''),
+              ('''.qa-node:hover,
+          .qa-node.hovered {''', '''.qa-node:hover {'''),
+              ('''.qa-node-expand-answer-btn.expanded {
+            background: var(--cg-surface-active);
+          }
+
+          ''', ''),
+              ('''.git-toolbar-row1 {
+            justify-content: space-between;
+          }
+
+          ''', ''),
+          ]
+
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'Expected CSS block not found:\n{old[:100]}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+          if git diff --quiet -- package-lock.json src/sidepanel/styles/index.css; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "chore: normalize package lock metadata"
+          git add package-lock.json src/sidepanel/styles/index.css
+          git commit -m "chore: remove obsolete panel styling"
           git push origin HEAD:"${GITHUB_REF_NAME}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
