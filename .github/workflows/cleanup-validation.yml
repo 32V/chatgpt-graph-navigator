@@ -62,6 +62,14 @@ jobs:
         if: steps.lock.outputs.changed == 'false'
         run: node scripts/test-current-node.mjs
 
+      - name: Test QA tree model
+        if: steps.lock.outputs.changed == 'false'
+        run: node scripts/test-qa-tree-model.mjs
+
+      - name: Test assistant stream normalization
+        if: steps.lock.outputs.changed == 'false'
+        run: node scripts/test-assistant-stream-normalizer.mjs
+
       - name: Test stable graph layout
         if: steps.lock.outputs.changed == 'false'
         run: node scripts/test-qa-tree-layout.mjs
