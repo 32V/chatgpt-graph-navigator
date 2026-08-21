@@ -83,6 +83,7 @@ button {
   background: var(--cg-bg);
 }
 
+/* Shared tree controls */
 .git-filter-toggle,
 .git-font-control {
   display: inline-flex;
@@ -172,6 +173,10 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
   font-family: inherit;
 }
 
+.react-flow__node:has(.qa-node-detail) {
+  z-index: 1000 !important;
+}
+
 .react-flow__edge-path {
   stroke: var(--cg-edge) !important;
   stroke-width: 1.15 !important;
@@ -234,7 +239,9 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
   width: 216px;
   min-width: 216px;
   max-width: 216px;
-  min-height: 82px;
+  height: 86px;
+  min-height: 86px;
+  max-height: 86px;
   padding: 10px 11px 11px;
   position: relative;
   overflow: visible;
@@ -372,7 +379,9 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
 }
 
 .qa-node-content {
+  height: 35px;
   min-height: 0;
+  overflow: hidden;
 }
 
 .qa-node-text {
@@ -388,13 +397,32 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
   overflow: hidden;
 }
 
-.qa-node-text.expanded {
-  -webkit-line-clamp: 8;
-}
-
 .qa-node-empty {
   color: var(--cg-text-tertiary);
   font-style: normal;
+}
+
+.qa-node-detail {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  z-index: 20;
+  width: min(320px, 72vw);
+  max-height: 240px;
+  padding: 10px 11px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  transform: translateX(-50%);
+  border: 1px solid var(--cg-border);
+  border-radius: 11px;
+  background: var(--cg-bg);
+  color: var(--cg-text);
+  box-shadow: var(--cg-shadow);
+  cursor: text;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .qa-node-path-indicator {
@@ -462,6 +490,7 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
   max-width: 190px;
   height: 42px;
   min-height: 42px;
+  max-height: 42px;
   padding: 0 10px;
   display: flex;
   align-items: center;
@@ -506,7 +535,7 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
   to { opacity: 1; }
 }
 
-/* Empty and error states */
+/* Empty, error, and loading states */
 .empty-state,
 .error-message,
 .git-tree-empty,
@@ -562,6 +591,24 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
 
 .error-message button:hover {
   background: var(--cg-surface-hover);
+}
+
+.panel-loading-indicator {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 50;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--cg-border);
+  border-top-color: var(--cg-text-secondary);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: cg-spin .7s linear infinite;
+}
+
+@keyframes cg-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Timeline tree */
@@ -896,12 +943,13 @@ mark {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
   }
 
   .qa-node.compact-answer,
-  .cg-edge-inline .react-flow__edge-path {
+  .cg-edge-inline .react-flow__edge-path,
+  .panel-loading-indicator {
     animation: none !important;
   }
 }
