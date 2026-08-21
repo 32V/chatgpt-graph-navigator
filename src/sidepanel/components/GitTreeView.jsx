@@ -104,12 +104,7 @@ export default function GitTreeView({
   qaTree,
   selectedPath,
   currentNodeId,
-  onNodeClick,
-  showPanelControls = true,
-  viewMode,
-  onViewModeChange,
-  onRefresh,
-  isLoading
+  onNodeClick
 }) {
   const containerRef = useRef(null);
   const initializedStructureRef = useRef(null);
@@ -226,7 +221,9 @@ export default function GitTreeView({
       const root = containerRef.current?.querySelector('.git-root');
       if (!root) return;
 
-      const escapedId = window.CSS?.escape ? window.CSS.escape(currentNodeId) : currentNodeId.replace(/["\\]/g, '\\$&');
+      const escapedId = window.CSS?.escape
+        ? window.CSS.escape(currentNodeId)
+        : currentNodeId.replace(/["\\]/g, '\\$&');
       const element = root.querySelector(`[data-node-id="${escapedId}"]`);
       if (!element) {
         if (attempt < 5) requestAnimationFrame(() => scrollToCurrent(attempt + 1));
@@ -495,43 +492,6 @@ export default function GitTreeView({
   return (
     <div className="git-tree" ref={containerRef} style={{ '--gitScale': String(fontScale) }}>
       <div className={`git-toolbar${toolbarCollapsed ? ' collapsed' : ''}`}>
-        {showPanelControls && (
-          <div className="git-toolbar-row git-toolbar-row1">
-            <div className="view-toggle" role="tablist" aria-label="View mode">
-              <button
-                className={`view-toggle-btn${viewMode === 'graph' ? ' active' : ''}`}
-                onClick={() => onViewModeChange?.('graph')}
-                title="Graph"
-                aria-label="Graph"
-                type="button"
-              >
-                <img className="toolbar-icon" src={iconUrl('graph.svg')} alt="" />
-              </button>
-              <button
-                className={`view-toggle-btn${viewMode === 'tree' ? ' active' : ''}`}
-                onClick={() => onViewModeChange?.('tree')}
-                title="Tree"
-                aria-label="Tree"
-                type="button"
-              >
-                <img className="toolbar-icon" src={iconUrl('tree.svg')} alt="" />
-              </button>
-            </div>
-            <button
-              className="refresh-btn icon-btn"
-              onClick={onRefresh}
-              disabled={isLoading}
-              title="Refresh"
-              aria-label="Refresh"
-              type="button"
-            >
-              <span className={isLoading ? 'spinning' : ''}>
-                <img className="toolbar-icon" src={iconUrl('fresh.svg')} alt="" />
-              </span>
-            </button>
-          </div>
-        )}
-
         {toolbarCollapsed ? (
           <button
             className="git-toolbar-reopen"
