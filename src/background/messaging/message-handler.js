@@ -3,11 +3,8 @@
  */
 
 import { MESSAGE_TYPES } from '../../shared/constants.js';
-import { sendMessageToTabWithFallback } from '../../shared/tab-messaging.js';
 import { db } from '../database/db.js';
 import { clearToken } from '../auth/token-capture.js';
-
-const CHATGPT_URL = /^https:\/\/(?:chatgpt\.com|chat\.openai\.com)\//i;
 
 export function setupMessageListener() {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -32,8 +29,6 @@ function handleMessage(message, sender) {
       return handleConversationLoaded(payload);
     case MESSAGE_TYPES.GET_CONVERSATION:
       return handleGetConversation(payload);
-    case MESSAGE_TYPES.SCROLL_TO_MESSAGE:
-      return handleScrollToMessage(payload, sender);
     case MESSAGE_TYPES.ERROR:
       console.error('[Background] Error from content script:', payload, sender);
       return Promise.resolve({ acknowledged: true });
@@ -63,27 +58,6 @@ async function handleGetConversation(payload) {
     db.getEdges(conversationId)
   ]);
   return { conversation, nodes, edges };
-}
-
-async function handleScrollToMessage(payload, sender) {
-  const messageId = payload?.messageId;
-  if (!messageId) throw new Error('Missing messageId');
-
-  let tab = sender?.tab || null;
-  if (!tab?.id || !CHATGPT_URL.test(tab.url || '')) {
-    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  }
-
-  if (!tab?.id || !CHATGPT_URL.test(tab.url || '')) {
-    throw new Error('No ChatGPT tab available for navigation');
-  }
-
-  return sendMessageToTabWithFallback(tab.id, {
-    type: MESSAGE_TYPES.SCROLL_TO_MESSAGE,
-    payload: { messageId }
-  }, {
-    retryDelayMs: 500
-  });
 }
 
 async function notifyPanel(type, payload) {
