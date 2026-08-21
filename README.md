@@ -19,6 +19,7 @@ The project is intentionally English-only.
 - **Restored in-place version navigation** — a small `document_start` compatibility layer restores edited-message pagination when a ChatGPT frontend experiment hides it.
 - **Canonical topology** — graph ancestry comes from ChatGPT's backend conversation `mapping`, never DOM sibling order.
 - **Stable answer expansion** — revealing a collapsed single assistant response does not move unrelated graph nodes.
+- **Stable message details** — full-message text opens as an overlay without changing Dagre node geometry.
 - **ChatGPT-native styling** — the dock derives its visual system from the active ChatGPT theme.
 - **Local persistence** — normalized graph data and preferences stay in the browser.
 
@@ -32,6 +33,7 @@ The project is intentionally English-only.
 | Right-drag the canvas | Pan without opening the browser context menu |
 | Mouse wheel / trackpad | Pan or zoom through React Flow controls |
 | `+` / `-` on a question | Reveal or hide its single assistant response |
+| Message-detail button | Show or hide the full message without relayout |
 | Panel left edge | Resize the dock |
 | Panel chevron | Collapse or expand the dock |
 
@@ -94,7 +96,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 ## Project structure
 
 ```text
-├── assets/                      # Extension icons and UI assets
+├── assets/                      # Extension icons and active UI assets
 ├── docs/                        # Architecture and development notes
 ├── scripts/                     # Release and regression checks
 ├── src/
@@ -116,11 +118,13 @@ CI runs the same checks before packaging:
 node scripts/check-no-chinese.mjs
 node scripts/test-edit-pagination-compat.mjs
 node scripts/test-current-node.mjs
+node scripts/test-qa-tree-model.mjs
+node scripts/test-assistant-stream-normalizer.mjs
 node scripts/test-qa-tree-layout.mjs
 npm run release
 ```
 
-The tests cover the early ChatGPT compatibility patch, canonical active-branch resolution, and the invariant that expanding a single assistant response does not move existing graph nodes.
+The tests cover the early ChatGPT compatibility adapter, canonical active-branch resolution, QA-tree construction, assistant-stream normalization, and the invariant that revealing a single assistant response does not move existing graph nodes.
 
 ## Compatibility notes
 
