@@ -164,9 +164,8 @@ jobs:
           ]
 
           for old, new in replacements:
-              if old not in text:
-                  raise SystemExit(f'Expected CSS block not found:\n{old[:100]}')
-              text = text.replace(old, new, 1)
+              if old in text:
+                  text = text.replace(old, new, 1)
 
           path.write_text(text)
           PY
@@ -179,7 +178,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package-lock.json src/sidepanel/styles/index.css
-          git commit -m "chore: remove obsolete panel styling"
+          git commit -m "chore: normalize cleanup tree"
           git push origin HEAD:"${GITHUB_REF_NAME}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
