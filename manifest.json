@@ -63,9 +63,7 @@
         "assets/*",
         "src/sidepanel/index.html",
         "dist/sidepanel.js",
-        "dist/sidepanel.css",
-        "dist/chatgpt-theme.css",
-        "dist/graph-ux.css"
+        "dist/sidepanel.css"
       ],
       "matches": [
         "https://chatgpt.com/*",
