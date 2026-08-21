@@ -1,20 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  buildQATree,
-  updateSelectedPath,
-  switchToSibling,
-  getSiblingInfo,
-  isOnSelectedPath,
-  getTreeStats,
-  getSelectedPathAsList,
-  debugPrintTree
-} from '../utils/qa-tree.js';
+import { useState, useEffect, useCallback } from 'react';
+import { buildQATree, updateSelectedPath } from '../utils/qa-tree.js';
 
 /**
- * Builds the QA tree and owns its currently selected path.
+ * Build the QA tree and keep its selected path aligned with ChatGPT's canonical
+ * `current_node`. Local node clicks still update immediately while the backend
+ * snapshot catches up.
  */
 export function useQATree(nodes, edges, options = {}) {
-  const { debug = false } = options;
+  const { activeNodeId = null } = options;
   const [tree, setTree] = useState(null);
 
   useEffect(() => {
@@ -24,90 +17,31 @@ export function useQATree(nodes, edges, options = {}) {
     }
 
     const nextTree = buildQATree(nodes, edges || []);
-    setTree(nextTree);
-    if (debug) debugPrintTree(nextTree);
-  }, [nodes, edges, debug]);
+    const hasActiveNode = Boolean(
+      activeNodeId &&
+      (nextTree.qNodeMap.has(activeNodeId) || nextTree.aNodeMap.has(activeNodeId))
+    );
+
+    setTree(hasActiveNode ? updateSelectedPath(nextTree, activeNodeId) : nextTree);
+  }, [nodes, edges, activeNodeId]);
 
   const selectNode = useCallback((nodeId) => {
-    if (!tree || !nodeId) return;
-    setTree(updateSelectedPath(tree, nodeId));
-  }, [tree]);
-
-  const switchSibling = useCallback((nodeId, direction) => {
-    if (!tree || !nodeId) return false;
-    const nextTree = switchToSibling(nodeId, direction, tree);
-    if (!nextTree) return false;
-    setTree(nextTree);
-    return true;
-  }, [tree]);
-
-  const switchToPrev = useCallback(
-    nodeId => switchSibling(nodeId, 'prev'),
-    [switchSibling]
-  );
-
-  const switchToNext = useCallback(
-    nodeId => switchSibling(nodeId, 'next'),
-    [switchSibling]
-  );
-
-  const getNodeSiblingInfo = useCallback(
-    nodeId => tree && nodeId ? getSiblingInfo(nodeId, tree) : null,
-    [tree]
-  );
-
-  const isNodeSelected = useCallback(
-    nodeId => Boolean(tree && nodeId && isOnSelectedPath(nodeId, tree.selectedPath)),
-    [tree]
-  );
-
-  const selectedPathList = useMemo(
-    () => tree ? getSelectedPathAsList(tree) : [],
-    [tree]
-  );
-
-  const stats = useMemo(
-    () => tree ? getTreeStats(tree) : null,
-    [tree]
-  );
-
-  const printTree = useCallback(() => {
-    if (tree) debugPrintTree(tree);
-  }, [tree]);
+    if (!nodeId) return;
+    setTree(currentTree => {
+      if (!currentTree) return currentTree;
+      if (!currentTree.qNodeMap.has(nodeId) && !currentTree.aNodeMap.has(nodeId)) {
+        return currentTree;
+      }
+      return updateSelectedPath(currentTree, nodeId);
+    });
+  }, []);
 
   return {
     tree,
-    root: tree?.root || null,
-    qNodeMap: tree?.qNodeMap || new Map(),
-    aNodeMap: tree?.aNodeMap || new Map(),
     selectedPath: tree?.selectedPath || new Set(),
-    activeLeafId: tree?.activeLeafId || null,
-    selectedPathList,
     selectNode,
-    switchToPrev,
-    switchToNext,
-    getNodeSiblingInfo,
-    isNodeSelected,
-    stats,
-    printTree,
     isReady: Boolean(tree?.root?.questions?.length)
   };
-}
-
-/**
- * Compatibility listener for any future external branch-change notification.
- */
-export function useBranchChangeListener(onBranchChange) {
-  useEffect(() => {
-    const handleMessage = (message) => {
-      if (message?.type === 'BRANCH_CHANGED' && message?.payload?.nodeId) {
-        onBranchChange?.(message.payload.nodeId);
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(handleMessage);
-    return () => chrome.runtime.onMessage.removeListener(handleMessage);
-  }, [onBranchChange]);
 }
 
 export default useQATree;
