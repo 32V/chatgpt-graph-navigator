@@ -4,7 +4,7 @@
 
 import { setupMessageListener } from './messaging/message-handler.js';
 import { db } from './database/db.js';
-import { initTokenCapture, getTokenStatus } from './auth/token-capture.js';
+import { initTokenCapture } from './auth/token-capture.js';
 
 let listenersRegistered = false;
 let actionConfigured = false;
@@ -48,7 +48,6 @@ function registerRuntimeListeners() {
     setupMessageListener();
     listenersRegistered = true;
   }
-
   if (!actionConfigured) {
     setupAction();
     actionConfigured = true;
@@ -62,8 +61,7 @@ async function initializeServices() {
   initializePromise = (async () => {
     try {
       await db.open();
-      const tokenCaptureReady = initTokenCapture();
-      if (tokenCaptureReady) await getTokenStatus();
+      initTokenCapture();
       servicesInitialized = true;
     } catch (error) {
       console.error('[Background] Initialization failed:', error);
