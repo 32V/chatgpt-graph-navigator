@@ -1,236 +1,170 @@
 # Architecture
 
-ChatGPT Graph Navigator is a Manifest V3 Chrome extension that augments `chatgpt.com` with a persistent conversation graph. The design deliberately separates **semantic conversation state** from **DOM interaction** so that ChatGPT frontend changes do not corrupt the graph.
+ChatGPT Graph Navigator is a Manifest V3 Chrome extension that adds a persistent conversation tree to ChatGPT. The architecture separates **canonical conversation state** from **DOM actuation** so frontend markup changes cannot silently corrupt graph topology.
 
 ## Runtime overview
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│ ChatGPT page                                                 │
-│                                                              │
-│  document_start MAIN world                                   │
-│  └─ edit-pagination compatibility layer                      │
-│                                                              │
-│  isolated extension world                                    │
-│  ├─ content script                                           │
-│  │  ├─ canonical conversation fetch                          │
-│  │  ├─ mapping parser                                        │
-│  │  ├─ DOM observers used as change signals                  │
-│  │  ├─ branch navigation actuator                            │
-│  │  └─ docked panel host                                     │
-│  │                                                           │
-│  └─ iframe: React graph/timeline UI                          │
-└──────────────────────┬───────────────────────────────────────┘
-                       │ chrome.runtime messages
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│ MV3 service worker                                           │
-│  ├─ message router                                           │
-│  ├─ bearer-token capture                                     │
-│  ├─ IndexedDB persistence                                    │
-│  └─ lightweight cache                                        │
-└──────────────────────────────────────────────────────────────┘
+ChatGPT page
+├── MAIN world, document_start
+│   └── edited-message pagination compatibility adapter
+│
+├── isolated extension world
+│   ├── content integration
+│   │   ├── canonical conversation fetch
+│   │   ├── mapping normalization
+│   │   ├── DOM and route change signals
+│   │   └── branch/navigation actuator
+│   └── right-dock host
+│       └── extension iframe: React graph/tree UI
+│
+└── MV3 service worker
+    ├── runtime message routing
+    ├── ChatGPT bearer-token capture
+    └── IndexedDB persistence
+        ├── conversations
+        ├── nodes
+        └── edges
 ```
 
-## Core design rules
+## Canonical state
 
-### 1. Backend mapping is the source of truth
+ChatGPT's conversation response provides two pieces of semantic state:
 
-ChatGPT exposes a conversation mapping with node IDs, parent/child relationships, and the active `current_node`. That mapping defines the semantic conversation tree.
+- `mapping` — node IDs and parent/child relationships for the complete conversation tree;
+- `current_node` — the leaf currently selected by ChatGPT.
 
-The extension does **not** use DOM sibling order to construct canonical ancestry. ChatGPT virtualizes long conversations and changes wrapper structure frequently, so DOM adjacency is not reliable enough for graph semantics.
+The extension treats both as authoritative. `mapping` defines topology and `current_node` defines the active branch path.
 
-### 2. DOM observations are change signals, not topology
+The raw mapping is normalized to user/assistant nodes. System and tool intermediary nodes are bypassed while preserving the nearest valid ancestry. Assistant stream fragments can also be collapsed into one graph node. When `current_node` points to a filtered intermediary or a stream fragment, `parser/current-node.js` resolves it to the normalized graph node that represents the same active branch.
 
-The content script observes message changes so it knows when the canonical snapshot may be stale. After a debounced change signal, it fetches the conversation mapping again and replaces the local graph state.
+## DOM boundary
 
-This avoids the historical failure mode where every new user message appeared as another root because `previousElementSibling` no longer represented the previous logical turn.
+The DOM is deliberately not a semantic data source.
 
-### 3. DOM interaction is isolated to UI actuation
+### Change signals
 
-Some operations still require the visible ChatGPT interface:
+`observers/message-observer.js` watches mounted turn IDs. A new message ID or a native edited-message version change emits only:
 
-- switching an edited-message branch;
-- mounting a virtualized turn by scrolling;
-- scrolling a selected message into view.
+```js
+{ id, role }
+```
 
-These operations are implemented in the branch/navigation layer and verified against message IDs. They are not used to define the graph itself.
+The content script then refetches the backend conversation snapshot. No DOM sibling, wrapper position, or `previousElementSibling` relationship is converted into a graph edge.
 
-### 4. Compatibility patches run before ChatGPT bootstraps
+### UI actuation
 
-Some ChatGPT frontend experiments hide the native edited-message pagination UI and replace it with a "continue in a new chat" flow. The extension restores the in-place branch selector in a small MAIN-world script injected at `document_start`.
+DOM-dependent behavior is limited to operations that necessarily control ChatGPT's visible interface:
 
-Keeping this patch separate from the main content bundle minimizes its scope and makes failures easier to isolate.
+- locating a mounted message;
+- scrolling virtualized history until a required turn is mounted;
+- operating ChatGPT's native previous/next edited-message controls;
+- verifying the resulting message ID.
 
-## Main modules
+This logic lives primarily in `utils/branch-navigator.js` and `utils/message-id-helper.js`.
 
-### `src/content/`
+## Edited-message compatibility adapter
 
-The content script owns page integration.
+Some ChatGPT frontend experiments replace in-place edited-message pagination with a modal/new-chat flow. `compat/edit-pagination-compat.js` runs in the page MAIN world at `document_start` and normalizes only the relevant frontend experiment fields before ChatGPT consumes them.
 
-#### `api/conversation.js`
+It is kept separate from the main content bundle so this invasive compatibility boundary remains small and testable.
 
-Fetches the canonical conversation snapshot from ChatGPT's backend API with retry handling.
+## Route lifecycle
 
-#### `parser/`
+ChatGPT is an SPA. The content script starts a route observer even when the initial page is not a conversation. Entering `/c/<id>` activates canonical synchronization; leaving a conversation route tears down message observation and in-memory graph state.
 
-Normalizes ChatGPT mapping nodes into the extension's graph representation. Assistant stream normalization collapses transient thinking/final-answer variants according to the selected setting.
+A generation counter prevents an old asynchronous fetch from committing after the user has already switched conversations.
 
-#### `observers/`
+## Canonical synchronization
 
-Watches the ChatGPT page for message and route changes. Message observers trigger canonical refreshes; route observers reload state when the conversation ID changes.
-
-#### `utils/branch-navigator.js`
-
-Navigates to arbitrary graph nodes. It:
-
-1. computes the target path from canonical graph data;
-2. identifies branch divergence points;
-3. mounts the relevant turn when virtualization has removed it from the DOM;
-4. uses ChatGPT's native previous/next branch controls;
-5. verifies that the expected message ID became active.
-
-#### `ui/docked-panel.js`
-
-Hosts the right-side graph panel inside ChatGPT. The panel:
-
-- opens automatically on conversation routes;
-- occupies layout space rather than covering the chat;
-- can be resized or collapsed;
-- follows the active ChatGPT theme;
-- embeds the React UI in an extension iframe.
-
-#### `compat/edit-pagination-compat.js`
-
-Runs in the page MAIN world at `document_start` and normalizes the ChatGPT frontend experiment that controls edited-message pagination.
-
-### `src/background/`
-
-The MV3 service worker handles persistence and cross-context messaging.
-
-#### `messaging/message-handler.js`
-
-Routes messages between the content script and UI. A missing IndexedDB conversation is treated as a normal cache miss so the UI can request a canonical refresh without generating an extension error.
-
-#### `database/`
-
-Stores conversations, nodes, edges, rounds, and branches in IndexedDB.
-
-#### `auth/token-capture.js`
-
-Captures the bearer token from ChatGPT requests so the content script can call the conversation endpoint without requiring repeated manual setup.
-
-### `src/sidepanel/`
-
-The same React application is embedded inside the in-page dock.
-
-#### `components/ConversationGraph.jsx`
-
-Renders the graph with React Flow. Main interactions:
-
-- single click: navigate ChatGPT to a node;
-- double click: focus the graph viewport on a node;
-- canvas drag: pan;
-- right drag: pan without the browser context menu;
-- controls/minimap: zoom and overview.
-
-#### `utils/qaTreeLayout.js`
-
-Builds the visual QA graph and applies Dagre layout. Single-answer response expansion is intentionally handled **after** the base layout so revealing an assistant node does not move unrelated nodes.
-
-#### `components/GitTreeView.jsx`
-
-Provides the compact timeline/tree representation, search, filtering, and branch inspection.
-
-## Data flow
-
-### Initial load
+### Initial conversation load
 
 ```text
-ChatGPT conversation route
-        │
-        ▼
-content script extracts conversation ID
-        │
-        ▼
+conversation route
+      ↓
+load captured token
+      ↓
 GET /backend-api/conversation/{id}
-        │
-        ▼
-parse + normalize mapping
-        │
-        ├─ initialize in-page conversation state
-        └─ send CONVERSATION_LOADED
-                │
-                ▼
-          service worker / IndexedDB
-                │
-                ▼
-             React UI
+      ↓
+parse mapping → nodes + edges
+      ↓
+normalize assistant stream groups
+      ↓
+resolve current_node
+      ↓
+persist canonical snapshot
+      ↓
+DATA_READY → embedded UI
 ```
 
 ### Live update
 
 ```text
-DOM observer detects a new/changed turn
-        │
-        ▼
-debounced canonical sync
-        │
-        ▼
-refetch backend mapping
-        │
-        ▼
-replace graph snapshot
-        │
-        ▼
-persist + notify UI
+DOM message/version ID changes
+      ↓
+debounced change signal
+      ↓
+refetch canonical backend snapshot
+      ↓
+replace nodes + edges + currentNodeId
+      ↓
+persist and refresh UI
 ```
 
-No canonical parent/child edge is created from DOM adjacency.
+A user-message signal waits longer than an assistant completion so a short exchange often collapses into one backend refresh. Limited retries cover backend persistence lag.
 
-## Persistence model
+## Persistence
 
-The IndexedDB database contains separate stores for:
+IndexedDB version 6 stores only data the current product reads:
 
-- `conversations`
-- `nodes`
-- `edges`
-- `rounds`
-- `branches`
-- conversation backups
+- `conversations` — title/timestamps, node/edge counts, and `currentNodeId`;
+- `nodes` — normalized graph nodes;
+- `edges` — normalized parent/child edges.
 
-The UI can open before a conversation has been written to IndexedDB. In that case `GET_CONVERSATION` returns a cache miss, and the UI asks the content script for a fresh canonical snapshot.
+Earlier derived stores for rounds, branches, and raw backups are removed during the v6 upgrade. The React UI derives its QA tree directly from nodes and edges.
 
-## Graph layout stability
+A panel may initialize before the content script has written the first snapshot. `GET_CONVERSATION` therefore treats a missing record as a normal cache miss; the UI requests a canonical refresh instead of surfacing an extension error.
 
-The graph has two layout layers:
+## Embedded UI
 
-1. **Base layout** — stable question nodes and explicit multi-answer branches are passed to Dagre.
-2. **Inline single-answer expansion** — a hidden single assistant response is inserted into the reserved vertical gap after Dagre finishes.
+The right dock hosts `src/sidepanel/index.html` in an extension iframe. The React application provides:
 
-Because the second step does not recompute Dagre positions, expanding or collapsing a single answer leaves every existing node at the same coordinates. A regression test enforces this invariant.
+- **Graph view** using React Flow;
+- **Timeline tree** for compact branch browsing, search, and filtering.
 
-## Theme integration
+A node click updates the panel selection immediately and requests ChatGPT navigation. The next canonical snapshot reconciles that optimistic selection with ChatGPT's actual `current_node`. Native ChatGPT version switching is likewise reflected after the observer triggers a canonical refresh.
 
-The dock reads ChatGPT's effective foreground/background colors and forwards them to the embedded UI. The graph derives all surfaces, borders, muted text, controls, and selection states from those host colors. This keeps light/dark theme behavior aligned with ChatGPT instead of maintaining a separate palette.
+## Stable graph layout
 
-## Build and verification
+Single-answer assistant responses are collapsed by default. The visual layout is intentionally two-stage:
 
-`build.js` bundles the runtime scripts and CSS with esbuild. `npm run release` builds production assets, assembles `release/`, and creates the ZIP package.
+1. Dagre computes a base layout without hidden single-answer nodes.
+2. When one is revealed, its compact node is inserted into reserved space between existing ranks.
+
+Existing node coordinates therefore do not change during answer reveal/hide. `scripts/test-qa-tree-layout.mjs` enforces this invariant.
+
+## Dock and theme integration
+
+`ui/docked-panel.js` creates the automatic right-hand dock. It occupies page layout space, is resizable/collapsible, and forwards ChatGPT's effective foreground/background colors to the iframe. The UI derives surfaces, borders, text, selection states, controls, and light/dark behavior from those host colors.
+
+## Build and regression checks
+
+`build.js` bundles runtime JS/CSS with esbuild. Release builds use esbuild's `pure` setting to remove nonessential `console.log/debug/info` calls without source-code regex rewriting.
 
 CI runs:
 
-1. an English-only source/documentation check;
-2. the edited-message compatibility regression test;
-3. the stable graph-layout regression test;
-4. the production build and package verification.
+1. English-only source/documentation check;
+2. edited-message compatibility test;
+3. canonical `current_node` resolution/selected-path test;
+4. stable graph-layout test;
+5. production release build and package verification.
 
 ## Compatibility boundaries
 
-ChatGPT is a private, evolving web application. The extension cannot eliminate all frontend coupling, but it intentionally limits that coupling to small adapters:
+ChatGPT is a private and changing web application. Frontend coupling is intentionally concentrated in three small areas:
 
-- the early experiment compatibility script;
+- the early experiment compatibility adapter;
 - native branch-control discovery;
-- virtualized-turn mounting and scrolling.
+- virtualized-turn mounting/scrolling.
 
-The conversation model, graph topology, and persistence layer remain independent of those details.
+Conversation topology, active-branch state, persistence, and graph rendering do not depend on DOM adjacency.
