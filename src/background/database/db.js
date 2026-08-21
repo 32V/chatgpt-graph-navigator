@@ -117,8 +117,7 @@ export class Database {
     await new Promise((resolve, reject) => {
       const tx = db.transaction(storeName, 'readwrite');
       const store = tx.objectStore(storeName);
-      const index = store.index('conversationId');
-      const request = index.openCursor(IDBKeyRange.only(conversationId));
+      const request = store.index('conversationId').openCursor(IDBKeyRange.only(conversationId));
 
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
@@ -144,12 +143,12 @@ export class Database {
     await transactionDone(tx);
   }
 
-  async saveNodes(conversationId, nodes) {
-    await this._replaceStoreRecords('nodes', conversationId, nodes);
+  saveNodes(conversationId, nodes) {
+    return this._replaceStoreRecords('nodes', conversationId, nodes);
   }
 
-  async saveEdges(conversationId, edges) {
-    await this._replaceStoreRecords('edges', conversationId, edges);
+  saveEdges(conversationId, edges) {
+    return this._replaceStoreRecords('edges', conversationId, edges);
   }
 
   async getNodes(conversationId) {
@@ -169,6 +168,15 @@ export class Database {
 
   async saveFullConversation(conversationData) {
     const conversationId = conversationData.id;
+
+    // Write the graph payload before publishing its metadata record. Readers may
+    // briefly see the previous complete snapshot, but never a new currentNodeId
+    // paired with the previous node/edge payload.
+    await Promise.all([
+      this.saveNodes(conversationId, conversationData.nodes || []),
+      this.saveEdges(conversationId, conversationData.edges || [])
+    ]);
+
     await this.saveConversation({
       id: conversationId,
       title: conversationData.title,
@@ -178,11 +186,6 @@ export class Database {
       nodeCount: conversationData.nodes?.length || 0,
       edgeCount: conversationData.edges?.length || 0
     });
-
-    await Promise.all([
-      this.saveNodes(conversationId, conversationData.nodes || []),
-      this.saveEdges(conversationId, conversationData.edges || [])
-    ]);
   }
 
   close() {
