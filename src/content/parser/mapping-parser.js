@@ -17,6 +17,24 @@ const TOOL_CONTENT_TYPES = new Set([
   'model_editable_context'
 ]);
 
+const STREAM_METADATA_KEYS = [
+  'is_incremental',
+  'stream_group_key',
+  'stream_group_part_index',
+  'stream_group_part_count',
+  'is_thinking_preamble_message',
+  'turn_exchange_id',
+  'timestamp'
+];
+
+function pickStreamMetadata(metadata = {}) {
+  const picked = {};
+  for (const key of STREAM_METADATA_KEYS) {
+    if (metadata[key] !== undefined) picked[key] = metadata[key];
+  }
+  return picked;
+}
+
 export function parseMapping(mapping, conversationId) {
   const replyDescendantCache = new Map();
 
@@ -73,9 +91,7 @@ export function parseMapping(mapping, conversationId) {
   const isValidConversationNode = (nodeId) => {
     if (validityCache.has(nodeId)) return validityCache.get(nodeId);
     const rawNode = mapping[nodeId];
-    const valid = Boolean(
-      rawNode?.message && isConversationMessage(rawNode.message, nodeId)
-    );
+    const valid = Boolean(rawNode?.message && isConversationMessage(rawNode.message, nodeId));
     validityCache.set(nodeId, valid);
     return valid;
   };
@@ -102,11 +118,8 @@ export function parseMapping(mapping, conversationId) {
       if (visited.has(childId)) continue;
       visited.add(childId);
 
-      if (isValidConversationNode(childId)) {
-        result.push(childId);
-      } else {
-        queue.push(...(mapping[childId]?.children || []));
-      }
+      if (isValidConversationNode(childId)) result.push(childId);
+      else queue.push(...(mapping[childId]?.children || []));
     }
 
     return result;
@@ -126,12 +139,10 @@ export function parseMapping(mapping, conversationId) {
       createTime: Number.isFinite(createTime) ? createTime : 0,
       parent: findValidAncestor(nodeId),
       children: findValidDescendants(nodeId),
-      metadata: {
-        status: message.status,
-        weight: message.weight,
-        endTurn: message.end_turn,
-        ...message.metadata
-      }
+      // Used only to identify native sibling groups when every valid ancestor
+      // was filtered from the normalized graph.
+      branchParentId: rawNode.parent || null,
+      metadata: pickStreamMetadata(message.metadata)
     });
   }
 
