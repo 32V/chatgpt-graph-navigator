@@ -3,7 +3,7 @@ import ConversationGraph from './components/ConversationGraph';
 import GitTreeView from './components/GitTreeView';
 import Header from './components/Header';
 import { useConversationData } from './hooks/useConversationData';
-import { useQATree, useBranchChangeListener } from './hooks/useQATree';
+import { useQATree } from './hooks/useQATree';
 import { MESSAGE_TYPES } from '../shared/constants.js';
 
 const IS_EMBEDDED = (() => {
@@ -116,12 +116,8 @@ function App() {
   } = useQATree(
     conversationData?.nodes || null,
     conversationData?.edges || null,
-    { debug: false }
+    { activeNodeId: currentNodeId }
   );
-
-  useBranchChangeListener(useCallback((nodeId) => {
-    selectNode(nodeId);
-  }, [selectNode]));
 
   const handleNodeClick = useCallback((nodeId, nodeData) => {
     setCurrentNodeId(nodeId);
