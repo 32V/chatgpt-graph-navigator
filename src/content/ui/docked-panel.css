@@ -1,0 +1,189 @@
+:root {
+  --cg-dock-occupied-width: 0px;
+  --cg-host-bg: rgb(255, 255, 255);
+  --cg-host-fg: rgb(13, 13, 13);
+}
+
+body.cg-graph-dock-visible main {
+  margin-right: var(--cg-dock-occupied-width) !important;
+  transition: margin-right 160ms cubic-bezier(.2, .8, .2, 1);
+}
+
+#__chatgpt_graph_docked_panel__ {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 2147483645;
+  width: var(--cg-dock-panel-width, 380px);
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--cg-host-fg) 11%, transparent);
+  background: var(--cg-host-bg);
+  color: var(--cg-host-fg);
+  box-shadow: none;
+  color-scheme: light dark;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  transition: width 160ms cubic-bezier(.2, .8, .2, 1), background-color 120ms ease;
+}
+
+#__chatgpt_graph_docked_panel__.cg-dock-resizing {
+  transition: none;
+}
+
+#__chatgpt_graph_docked_panel__.cg-dock-collapsed {
+  width: var(--cg-dock-rail-width, 36px);
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-resizer {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  z-index: 4;
+  width: 9px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-resizer::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-resizer:hover::after,
+#__chatgpt_graph_docked_panel__.cg-dock-resizing .cg-dock-resizer::after {
+  background: color-mix(in srgb, var(--cg-host-fg) 24%, transparent);
+}
+
+#__chatgpt_graph_docked_panel__.cg-dock-collapsed .cg-dock-resizer {
+  display: none;
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-header {
+  height: 48px;
+  min-height: 48px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--cg-host-fg) 10%, transparent);
+  background: var(--cg-host-bg);
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-title {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  opacity: .94;
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-segment {
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid color-mix(in srgb, var(--cg-host-fg) 9%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cg-host-fg) 5%, transparent);
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: transparent;
+  color: var(--cg-host-fg);
+  cursor: pointer;
+  opacity: .66;
+  transition: background-color 110ms cubic-bezier(.2, .8, .2, 1), opacity 110ms cubic-bezier(.2, .8, .2, 1);
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-button:hover {
+  background: color-mix(in srgb, var(--cg-host-fg) 8%, transparent);
+  opacity: .96;
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-button.cg-active {
+  background: color-mix(in srgb, var(--cg-host-fg) 12%, transparent);
+  opacity: 1;
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-button img {
+  width: 15px;
+  height: 15px;
+  opacity: .78;
+  filter: var(--cg-dock-icon-filter, none);
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-collapse {
+  margin-left: 1px;
+  font-size: 19px;
+  font-weight: 300;
+  opacity: .58;
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-collapse:hover {
+  opacity: .95;
+}
+
+#__chatgpt_graph_docked_panel__ .cg-dock-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--cg-host-bg);
+}
+
+#__chatgpt_graph_docked_panel__ iframe {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  background: var(--cg-host-bg);
+}
+
+#__chatgpt_graph_docked_panel__.cg-dock-collapsed .cg-dock-header {
+  height: 100%;
+  min-height: 0;
+  padding: 8px 3px;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 6px;
+  border-bottom: 0;
+}
+
+#__chatgpt_graph_docked_panel__.cg-dock-collapsed .cg-dock-title,
+#__chatgpt_graph_docked_panel__.cg-dock-collapsed .cg-dock-segment,
+#__chatgpt_graph_docked_panel__.cg-dock-collapsed [data-action="refresh"],
+#__chatgpt_graph_docked_panel__.cg-dock-collapsed .cg-dock-body {
+  display: none;
+}
+
+#__chatgpt_graph_docked_panel__.cg-dock-collapsed .cg-dock-collapse {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.cg-graph-dock-visible main,
+  #__chatgpt_graph_docked_panel__,
+  #__chatgpt_graph_docked_panel__ .cg-dock-button,
+  #__chatgpt_graph_docked_panel__ .cg-dock-resizer::after {
+    transition-duration: .01ms !important;
+  }
+}
