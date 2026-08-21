@@ -112,27 +112,35 @@ export class Database {
     return (await requestResult(tx.objectStore('conversations').get(id))) || null;
   }
 
-  async _replaceStoreRecords(storeName, conversationId, items) {
+  async _deleteStoreRecords(storeName, conversationId) {
     const db = await this.open();
-    const tx = db.transaction(storeName, 'readwrite');
-    const store = tx.objectStore(storeName);
-    const index = store.index('conversationId');
-
     await new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      const index = store.index('conversationId');
       const request = index.openCursor(IDBKeyRange.only(conversationId));
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('IndexedDB delete transaction aborted'));
+      request.onerror = () => reject(request.error);
       request.onsuccess = (event) => {
         const cursor = event.target.result;
-        if (!cursor) {
-          resolve();
-          return;
-        }
+        if (!cursor) return;
         cursor.delete();
         cursor.continue();
       };
-      request.onerror = () => reject(request.error);
     });
+  }
 
-    for (const item of items || []) store.put(item);
+  async _replaceStoreRecords(storeName, conversationId, items) {
+    await this._deleteStoreRecords(storeName, conversationId);
+    if (!items?.length) return;
+
+    const db = await this.open();
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    for (const item of items) store.put(item);
     await transactionDone(tx);
   }
 
