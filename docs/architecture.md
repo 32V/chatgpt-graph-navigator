@@ -63,6 +63,8 @@ DOM-dependent behavior is limited to operations that necessarily control ChatGPT
 
 This logic lives primarily in `utils/branch-navigator.js` and `utils/message-id-helper.js`.
 
+The embedded panel sends navigation messages directly to the content script in its host ChatGPT tab. The service worker does not proxy node navigation, which avoids accidental routing through whichever browser tab happens to be active.
+
 ## Edited-message compatibility adapter
 
 Some ChatGPT frontend experiments replace in-place edited-message pagination with a modal/new-chat flow. `compat/edit-pagination-compat.js` runs in the page MAIN world at `document_start` and normalizes only the relevant frontend experiment fields before ChatGPT consumes them.
@@ -73,7 +75,7 @@ It is kept separate from the main content bundle so this invasive compatibility 
 
 ChatGPT is an SPA. The content script starts a route observer even when the initial page is not a conversation. Entering `/c/<id>` activates canonical synchronization; leaving a conversation route tears down message observation and in-memory graph state.
 
-A generation counter prevents an old asynchronous fetch from committing after the user has already switched conversations.
+A generation counter prevents an old asynchronous fetch from committing after the user has already switched conversations. The embedded panel likewise binds its reads and navigation requests to its host ChatGPT tab and rejects stale asynchronous results after a route change.
 
 ## Canonical synchronization
 
@@ -123,6 +125,8 @@ IndexedDB version 6 stores only data the current product reads:
 
 Earlier derived stores for rounds, branches, and raw backups are removed during the v6 upgrade. The React UI derives its QA tree directly from nodes and edges.
 
+A canonical write stores nodes and edges before publishing the corresponding conversation metadata. A concurrent reader may briefly observe the previous complete snapshot, but it cannot observe a new `currentNodeId` paired with the previous graph payload.
+
 A panel may initialize before the content script has written the first snapshot. `GET_CONVERSATION` therefore treats a missing record as a normal cache miss; the UI requests a canonical refresh instead of surfacing an extension error.
 
 ## Embedded UI
@@ -132,20 +136,20 @@ The right dock hosts `src/sidepanel/index.html` in an extension iframe. The Reac
 - **Graph view** using React Flow;
 - **Timeline tree** for compact branch browsing, search, and filtering.
 
-A node click updates the panel selection immediately and requests ChatGPT navigation. The next canonical snapshot reconciles that optimistic selection with ChatGPT's actual `current_node`. Native ChatGPT version switching is likewise reflected after the observer triggers a canonical refresh.
+A node click updates the panel selection immediately and asks the content script in the same host tab to navigate ChatGPT. The next canonical snapshot reconciles that optimistic selection with ChatGPT's actual `current_node`. Native ChatGPT version switching is likewise reflected after the observer triggers a canonical refresh.
 
-## Stable graph layout
+## Stable graph geometry
 
 Single-answer assistant responses are collapsed by default. The visual layout is intentionally two-stage:
 
 1. Dagre computes a base layout without hidden single-answer nodes.
 2. When one is revealed, its compact node is inserted into reserved space between existing ranks.
 
-Existing node coordinates therefore do not change during answer reveal/hide. `scripts/test-qa-tree-layout.mjs` enforces this invariant.
+Existing node coordinates therefore do not change during answer reveal/hide. Graph cards also keep fixed dimensions matching the Dagre constants; full-message text opens in an overlay rather than resizing a node. `scripts/test-qa-tree-layout.mjs` enforces the answer-reveal coordinate invariant.
 
 ## Dock and theme integration
 
-`ui/docked-panel.js` creates the automatic right-hand dock. It occupies page layout space, is resizable/collapsible, and forwards ChatGPT's effective foreground/background colors to the iframe. The UI derives surfaces, borders, text, selection states, controls, and light/dark behavior from those host colors.
+`ui/docked-panel.js` owns behavior for the automatic right-hand dock, while `ui/docked-panel.css` owns its host-page presentation. The dock occupies page layout space, is resizable/collapsible, and forwards ChatGPT's effective foreground/background colors to the iframe. The panel uses one token-based stylesheet for its graph and timeline views.
 
 ## Build and regression checks
 
@@ -156,8 +160,10 @@ CI runs:
 1. English-only source/documentation check;
 2. edited-message compatibility test;
 3. canonical `current_node` resolution/selected-path test;
-4. stable graph-layout test;
-5. production release build and package verification.
+4. normalized QA-tree model test;
+5. assistant-stream normalization test;
+6. stable graph-layout test;
+7. production release build and package verification.
 
 ## Compatibility boundaries
 
