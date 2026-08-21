@@ -1,13 +1,11 @@
 /**
- * Shared constants used by the current extension runtime.
+ * Shared constants used by the extension runtime.
  */
 
-export const EXTENSION_NAME = 'ChatGPT Graph';
-export const LOG_PREFIX = `[${EXTENSION_NAME}]`;
+export const LOG_PREFIX = '[ChatGPT Graph]';
 
 export const API_ENDPOINTS = {
-  CONVERSATION: '/backend-api/conversation',
-  ME: '/backend-api/me'
+  CONVERSATION: '/backend-api/conversation'
 };
 
 export const MESSAGE_TYPES = {
@@ -16,7 +14,6 @@ export const MESSAGE_TYPES = {
   GET_CONVERSATION: 'GET_CONVERSATION',
   REFRESH_DATA: 'REFRESH_DATA',
   SCROLL_TO_MESSAGE: 'SCROLL_TO_MESSAGE',
-  GET_TOKEN_STATUS: 'GET_TOKEN_STATUS',
   CLEAR_TOKEN: 'CLEAR_TOKEN',
   DATA_READY: 'DATA_READY',
   ASSISTANT_STREAM_SETTINGS_CHANGED: 'ASSISTANT_STREAM_SETTINGS_CHANGED'
