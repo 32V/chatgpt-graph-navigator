@@ -4,7 +4,14 @@ import { sendMessageToTabWithFallback } from '../../shared/tab-messaging.js';
 
 const CONVERSATION_ID_REGEX = /\/c\/([a-f0-9-]+)/i;
 
-async function queryActiveTab() {
+async function queryHostTab() {
+  try {
+    const tab = await chrome.tabs.getCurrent();
+    if (tab) return tab;
+  } catch {
+    // Some Chromium builds do not expose getCurrent() to extension iframes.
+  }
+
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     return tab || null;
@@ -17,8 +24,8 @@ function conversationIdFromUrl(url = '') {
   return String(url).match(CONVERSATION_ID_REGEX)?.[1] || null;
 }
 
-async function getActiveConversationId() {
-  return conversationIdFromUrl((await queryActiveTab())?.url);
+async function getHostConversationId() {
+  return conversationIdFromUrl((await queryHostTab())?.url);
 }
 
 async function sendRuntimeMessage(message) {
@@ -49,7 +56,7 @@ export function useConversationData() {
   const triggerContentRefresh = useCallback(async (conversationId) => {
     if (!conversationId || pendingRefreshes.current.has(conversationId)) return;
 
-    const tab = await queryActiveTab();
+    const tab = await queryHostTab();
     if (!tab?.id || conversationIdFromUrl(tab.url) !== conversationId) return;
 
     pendingRefreshes.current.add(conversationId);
@@ -113,8 +120,8 @@ export function useConversationData() {
     }
   }, [triggerContentRefresh]);
 
-  const syncWithActiveTab = useCallback(async () => {
-    const conversationId = await getActiveConversationId();
+  const syncWithHostTab = useCallback(async () => {
+    const conversationId = await getHostConversationId();
     if (conversationId === activeConversationRef.current) return;
 
     activeConversationRef.current = conversationId;
@@ -132,7 +139,7 @@ export function useConversationData() {
   }, [fetchConversation]);
 
   const refreshData = useCallback(async () => {
-    const conversationId = await getActiveConversationId();
+    const conversationId = await getHostConversationId();
     if (!conversationId) return;
 
     if (activeConversationRef.current !== conversationId) {
@@ -160,23 +167,20 @@ export function useConversationData() {
   }, [fetchConversation]);
 
   useEffect(() => {
-    void syncWithActiveTab();
+    void syncWithHostTab();
 
-    const onActivated = () => void syncWithActiveTab();
-    const onUpdated = (_tabId, changeInfo, tab) => {
-      if (tab?.active && changeInfo?.url) void syncWithActiveTab();
+    const onUpdated = (_tabId, changeInfo) => {
+      if (changeInfo?.url) void syncWithHostTab();
     };
 
-    chrome.tabs.onActivated.addListener(onActivated);
     chrome.tabs.onUpdated.addListener(onUpdated);
-    const timer = setInterval(() => void syncWithActiveTab(), 1500);
+    const timer = setInterval(() => void syncWithHostTab(), 1500);
 
     return () => {
-      chrome.tabs.onActivated.removeListener(onActivated);
       chrome.tabs.onUpdated.removeListener(onUpdated);
       clearInterval(timer);
     };
-  }, [syncWithActiveTab]);
+  }, [syncWithHostTab]);
 
   return {
     conversationData,
