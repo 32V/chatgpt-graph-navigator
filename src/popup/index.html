@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-i18n-title="popupTitle">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -56,9 +56,7 @@
       color: var(--text);
     }
 
-    button, input { font: inherit; }
-    button { color: inherit; }
-
+    button, input { font: inherit; color: inherit; }
     .header {
       position: sticky;
       top: 0;
@@ -71,14 +69,12 @@
       background: color-mix(in srgb, var(--bg) 92%, transparent);
       backdrop-filter: blur(12px);
     }
-
     .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
     .brand-icon { width: 30px; height: 30px; border-radius: 8px; overflow: hidden; flex: 0 0 auto; }
     .brand-icon img { width: 100%; height: 100%; display: block; }
     .brand-info { min-width: 0; }
     .brand-info h1 { margin: 0; font-size: 13px; font-weight: 650; letter-spacing: -.01em; }
     .brand-info p { margin: 1px 0 0; font-size: 11px; color: var(--subtle); }
-
     .header-settings-btn {
       margin-left: auto;
       width: 30px;
@@ -96,14 +92,12 @@
     .popup-settings-panel { padding: 12px 14px 0; }
     .popup-settings-panel.collapsed { display: none; }
     .content-wrapper { padding: 14px; display: grid; gap: 12px; }
-
     .status, .token-info, .help, .collapse-settings, .popup-settings-card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       overflow: hidden;
     }
-
     .status { padding: 4px 12px; }
     .status-item {
       min-height: 38px;
@@ -118,31 +112,13 @@
     .status-value.success { color: var(--success); background: var(--success-bg); }
     .status-value.warning { color: var(--warning); background: var(--warning-bg); }
     .status-value.error { color: var(--error); background: var(--error-bg); }
-
-    .token-info { padding: 12px; }
-    .token-info h3, .collapse-settings h3, .popup-settings-card h3 {
-      margin: 0;
-      font-size: 12px;
-      font-weight: 650;
-    }
-    .token-preview {
-      margin-top: 8px;
-      padding: 8px 9px;
-      border-radius: 7px;
-      background: var(--bg);
-      border: 1px solid var(--border-light);
-      color: var(--muted);
-      font: 10.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      word-break: break-all;
-    }
-    .token-time { margin-top: 8px; color: var(--subtle); font-size: 11px; }
-
-    .help { padding: 11px 12px; }
+    .token-info, .help { padding: 11px 12px; }
+    .token-info h3, .collapse-settings h3, .popup-settings-card h3 { margin: 0; font-size: 12px; font-weight: 650; }
+    .token-time { margin-top: 7px; color: var(--subtle); font-size: 11px; }
     .help p { margin: 0; color: var(--muted); font-size: 11.5px; }
     .help strong { color: var(--text); }
-
-    .actions { display: flex; gap: 8px; }
-    .actions button, .mini-btn {
+    .actions { display: flex; gap: 8px; margin-top: 8px; }
+    .actions button {
       flex: 1;
       min-height: 34px;
       padding: 7px 10px;
@@ -152,13 +128,8 @@
       cursor: pointer;
       transition: background .12s ease, border-color .12s ease;
     }
-    .actions button:hover, .mini-btn:hover { background: var(--surface-hover); }
-    .actions button.primary {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: var(--bg);
-      font-weight: 600;
-    }
+    .actions button:hover { background: var(--surface-hover); }
+    .actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
 
     .popup-settings-card h3 { padding: 11px 12px 4px; }
     .setting-help { margin: 0; padding: 0 12px 9px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border-light); }
@@ -169,27 +140,19 @@
     .stream-mode-option span { display: grid; gap: 2px; }
     .stream-mode-option strong { font-size: 12px; }
     .stream-mode-option small { color: var(--muted); font-size: 10.5px; }
-
+    .collapse-settings { margin-top: 8px; }
     .collapse-settings h3 { padding: 10px 12px; border-bottom: 1px solid var(--border-light); }
     .setting-item { min-height: 38px; padding: 7px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     .setting-item + .setting-item { border-top: 1px solid var(--border-light); }
     .setting-item label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
     .setting-item input[type="checkbox"] { accent-color: currentColor; }
-    .setting-item input[type="number"] {
-      width: 66px; padding: 5px 7px; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 7px;
-    }
+    .setting-item input[type="number"] { width: 66px; padding: 5px 7px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; }
     .unit { color: var(--subtle); font-size: 10px; }
     .setting-group { margin-left: 20px; border-left: 1px solid var(--border-light); }
     .setting-disabled { opacity: .45; pointer-events: none; }
-
-    .zoom-row { width: 100%; display: flex; align-items: center; gap: 8px; }
-    .zoom-row input[type="range"] { flex: 1; }
-    .mini-btn { flex: 0 0 auto; min-height: 28px; padding: 4px 8px; }
-
-    .loading { min-height: 80px; display: grid; place-items: center; color: var(--muted); }
+    .loading { min-height: 80px; display: grid; place-items: center; gap: 8px; color: var(--muted); }
     .spinner { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--text); border-radius: 50%; animation: spin .7s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-
     ::-webkit-scrollbar { width: 8px; }
     ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 20%, transparent); border: 2px solid transparent; background-clip: padding-box; border-radius: 999px; }
   </style>
@@ -209,12 +172,11 @@
   </header>
 
   <div id="popup-settings-panel" class="popup-settings-panel collapsed"></div>
-
   <main class="content-wrapper">
     <div id="content">
       <div class="loading">
         <div class="spinner"></div>
-        <p data-i18n="loading">Loading...</p>
+        <p>Loading...</p>
       </div>
     </div>
   </main>
