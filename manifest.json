@@ -1,9 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "__MSG_extName__",
+  "name": "ChatGPT Graph Navigator",
   "version": "0.6.0",
-  "description": "__MSG_extDescription__",
-  "default_locale": "en",
+  "description": "A native-feeling conversation tree and branch navigator for ChatGPT.",
   "icons": {
     "16": "assets/icon16.png",
     "48": "assets/icon48.png",
@@ -16,11 +15,10 @@
       "48": "assets/icon48.png",
       "128": "assets/icon128.png"
     },
-    "default_title": "__MSG_extDefaultTitle__"
+    "default_title": "ChatGPT Graph Navigator"
   },
   "permissions": [
     "storage",
-    "sidePanel",
     "tabs",
     "scripting",
     "webRequest"
@@ -74,8 +72,5 @@
         "https://chat.openai.com/*"
       ]
     }
-  ],
-  "side_panel": {
-    "default_path": "src/sidepanel/index.html"
-  }
+  ]
 }
