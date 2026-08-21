@@ -53,7 +53,7 @@ jobs:
           test -f release/manifest.json
           test -f release/dist/edit-pagination-compat.js
           test -f release/dist/docked-panel.js
-          test -f release/dist/docked-panel-theme.css
+          test -f release/dist/docked-panel.css
           test -f release/dist/content.js
           test -f release/dist/background.js
           test -f release/dist/popup.js
@@ -64,6 +64,7 @@ jobs:
           test -f release/src/setup/index.html
           test -f release/src/sidepanel/index.html
           test ! -d release/_locales
+          test ! -f release/dist/docked-panel-theme.css
           test ! -f release/dist/chatgpt-theme.css
           test ! -f release/dist/graph-ux.css
           node -e "JSON.parse(require('fs').readFileSync('release/manifest.json', 'utf8')); console.log('manifest.json is valid JSON')"
