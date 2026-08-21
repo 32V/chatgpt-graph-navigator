@@ -30,7 +30,8 @@ async function handleMessage(message, sender) {
     case MESSAGE_TYPES.SCROLL_TO_MESSAGE:
       return handleScrollToMessage(payload);
     case MESSAGE_TYPES.ERROR:
-      return handleError(payload, sender);
+      console.error('[Background] Error from content script:', payload, sender);
+      return { acknowledged: true };
     case MESSAGE_TYPES.GET_TOKEN_STATUS:
       return getTokenStatus();
     case MESSAGE_TYPES.CLEAR_TOKEN:
@@ -45,11 +46,10 @@ async function handleConversationLoaded(conversationData) {
 
   await notifyPanel(MESSAGE_TYPES.DATA_READY, {
     conversationId: conversationData.id,
+    currentNodeId: conversationData.currentNodeId || null,
     stats: {
       nodes: conversationData.nodes?.length || 0,
-      edges: conversationData.edges?.length || 0,
-      rounds: conversationData.rounds?.length || 0,
-      branches: conversationData.branches?.length || 0
+      edges: conversationData.edges?.length || 0
     }
   });
 
@@ -60,31 +60,25 @@ async function handleConversationLoaded(conversationData) {
 }
 
 async function handleGetConversation(payload) {
-  const { conversationId } = payload;
-  const conversation = await db.getConversation(conversationId);
+  const conversationId = payload?.conversationId;
+  if (!conversationId) throw new Error('Missing conversationId');
 
-  // The panel may initialize before the content script writes its first
-  // canonical snapshot. A missing record is a normal cache miss.
+  const conversation = await db.getConversation(conversationId);
   if (!conversation) return null;
 
-  const [nodes, edges, rounds] = await Promise.all([
+  const [nodes, edges] = await Promise.all([
     db.getNodes(conversationId),
-    db.getEdges(conversationId),
-    db.getRounds(conversationId)
+    db.getEdges(conversationId)
   ]);
 
-  return { conversation, nodes, edges, rounds };
-}
-
-async function handleError(errorData) {
-  console.error('[Background] Error from content script:', errorData);
-  return { acknowledged: true };
+  return { conversation, nodes, edges };
 }
 
 async function handleScrollToMessage(payload) {
-  const { messageId } = payload;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const messageId = payload?.messageId;
+  if (!messageId) throw new Error('Missing messageId');
 
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error('No active tab found');
   if (!tab.url?.includes('chatgpt.com') && !tab.url?.includes('chat.openai.com')) {
     throw new Error('Active tab is not a ChatGPT page');
