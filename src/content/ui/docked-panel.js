@@ -250,9 +250,19 @@ function setupResize(panel) {
 }
 
 function setActiveView(panel, mode) {
+  panel.dataset.viewMode = mode;
   panel.querySelectorAll('[data-view-mode]').forEach((button) => {
     button.classList.toggle('cg-active', button.dataset.viewMode === mode);
   });
+}
+
+function setMiniMapActive(panel, visible) {
+  const button = panel.querySelector('[data-action="minimap"]');
+  if (!button) return;
+  button.classList.toggle('cg-active', visible);
+  button.setAttribute('aria-pressed', String(visible));
+  button.title = visible ? 'Hide minimap' : 'Show minimap';
+  button.setAttribute('aria-label', button.title);
 }
 
 function setupControls(panel) {
@@ -262,6 +272,10 @@ function setupControls(panel) {
       setActiveView(panel, mode);
       postToFrame(panel, { type: 'CG_SET_VIEW_MODE', payload: { mode } });
     });
+  });
+
+  panel.querySelector('[data-action="minimap"]')?.addEventListener('click', () => {
+    postToFrame(panel, { type: 'CG_TOGGLE_MINIMAP' });
   });
 
   panel.querySelector('[data-action="refresh"]')?.addEventListener('click', () => {
@@ -285,8 +299,11 @@ function setupControls(panel) {
     if (data.type === 'CG_READY') {
       applyTheme(panel);
       postToFrame(panel, { type: 'CG_REQUEST_VIEW_MODE' });
+      postToFrame(panel, { type: 'CG_REQUEST_MINIMAP_STATE' });
     } else if (data.type === 'CG_VIEW_MODE' && data.payload?.mode) {
       setActiveView(panel, String(data.payload.mode));
+    } else if (data.type === 'CG_MINIMAP_STATE') {
+      setMiniMapActive(panel, data.payload?.visible === true);
     } else if (data.type === 'CG_THEME_REQUEST') {
       applyTheme(panel);
     }
@@ -301,6 +318,7 @@ async function createPanel() {
 
   const panel = document.createElement('aside');
   panel.id = PANEL_ID;
+  panel.dataset.viewMode = 'graph';
   panel.style.setProperty('--cg-host-bg', initialTheme.background);
   panel.style.setProperty('--cg-host-fg', initialTheme.foreground);
   panel.style.setProperty('--cg-dock-icon-filter', initialTheme.mode === 'dark' ? 'invert(1)' : 'none');
@@ -310,13 +328,16 @@ async function createPanel() {
     <div class="cg-dock-header">
       <div class="cg-dock-title">Conversation graph</div>
       <div class="cg-dock-segment" role="group" aria-label="Conversation graph view">
-        <button class="cg-dock-button" data-view-mode="graph" title="Graph view" aria-label="Graph view" type="button">
+        <button class="cg-dock-button cg-active" data-view-mode="graph" title="Graph view" aria-label="Graph view" type="button">
           <img src="${chrome.runtime.getURL('assets/graph.svg')}" alt="">
         </button>
         <button class="cg-dock-button" data-view-mode="tree" title="Tree view" aria-label="Tree view" type="button">
           <img src="${chrome.runtime.getURL('assets/tree.svg')}" alt="">
         </button>
       </div>
+      <button class="cg-dock-button" data-action="minimap" title="Show minimap" aria-label="Show minimap" aria-pressed="false" type="button">
+        <img src="${chrome.runtime.getURL('assets/minimap.svg')}" alt="">
+      </button>
       <button class="cg-dock-button" data-action="refresh" title="Refresh graph" aria-label="Refresh graph" type="button">
         <img src="${chrome.runtime.getURL('assets/fresh.svg')}" alt="">
       </button>
