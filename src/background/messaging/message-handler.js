@@ -7,6 +7,8 @@ import { sendMessageToTabWithFallback } from '../../shared/tab-messaging.js';
 import { db } from '../database/db.js';
 import { clearToken } from '../auth/token-capture.js';
 
+const CHATGPT_URL = /^https:\/\/(?:chatgpt\.com|chat\.openai\.com)\//i;
+
 export function setupMessageListener() {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const task = handleMessage(message, sender);
@@ -31,7 +33,7 @@ function handleMessage(message, sender) {
     case MESSAGE_TYPES.GET_CONVERSATION:
       return handleGetConversation(payload);
     case MESSAGE_TYPES.SCROLL_TO_MESSAGE:
-      return handleScrollToMessage(payload);
+      return handleScrollToMessage(payload, sender);
     case MESSAGE_TYPES.ERROR:
       console.error('[Background] Error from content script:', payload, sender);
       return Promise.resolve({ acknowledged: true });
@@ -45,16 +47,7 @@ function handleMessage(message, sender) {
 async function handleConversationLoaded(conversationData) {
   if (!conversationData?.id) throw new Error('Missing conversation data');
   await db.saveFullConversation(conversationData);
-
-  await notifyPanel(MESSAGE_TYPES.DATA_READY, {
-    conversationId: conversationData.id,
-    currentNodeId: conversationData.currentNodeId || null,
-    stats: {
-      nodes: conversationData.nodes?.length || 0,
-      edges: conversationData.edges?.length || 0
-    }
-  });
-
+  await notifyPanel(MESSAGE_TYPES.DATA_READY, { conversationId: conversationData.id });
   return { conversationId: conversationData.id };
 }
 
@@ -69,18 +62,20 @@ async function handleGetConversation(payload) {
     db.getNodes(conversationId),
     db.getEdges(conversationId)
   ]);
-
   return { conversation, nodes, edges };
 }
 
-async function handleScrollToMessage(payload) {
+async function handleScrollToMessage(payload, sender) {
   const messageId = payload?.messageId;
   if (!messageId) throw new Error('Missing messageId');
 
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error('No active tab found');
-  if (!tab.url?.includes('chatgpt.com') && !tab.url?.includes('chat.openai.com')) {
-    throw new Error('Active tab is not a ChatGPT page');
+  let tab = sender?.tab || null;
+  if (!tab?.id || !CHATGPT_URL.test(tab.url || '')) {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  }
+
+  if (!tab?.id || !CHATGPT_URL.test(tab.url || '')) {
+    throw new Error('No ChatGPT tab available for navigation');
   }
 
   return sendMessageToTabWithFallback(tab.id, {
