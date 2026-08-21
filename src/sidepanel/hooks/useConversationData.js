@@ -78,6 +78,24 @@ export function useConversationData() {
     }
   }, []);
 
+  const navigateToMessage = useCallback(async (messageId) => {
+    if (!messageId) return false;
+
+    const tab = await queryHostTab();
+    const conversationId = conversationIdFromUrl(tab?.url);
+    if (!tab?.id || !conversationId || conversationId !== activeConversationRef.current) {
+      throw new Error('ChatGPT host tab is unavailable');
+    }
+
+    const response = await sendMessageToTabWithFallback(tab.id, {
+      type: MESSAGE_TYPES.SCROLL_TO_MESSAGE,
+      payload: { messageId }
+    }, {
+      retryDelayMs: 500
+    });
+    return response?.success !== false;
+  }, []);
+
   const fetchConversation = useCallback(async (conversationId, options = {}) => {
     const { requestIfMissing = true } = options;
 
@@ -187,6 +205,7 @@ export function useConversationData() {
     isLoading,
     error,
     refreshData,
+    navigateToMessage,
     currentNodeId,
     setCurrentNodeId
   };
