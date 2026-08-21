@@ -2,24 +2,11 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 
-const container = document.getElementById('root');
-const root = createRoot(container);
-
-const IS_EMBEDDED = (() => {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    if (!params.has('embedded')) return false;
-
-    document.documentElement.classList.add('embedded');
-    const initialTheme = params.get('theme');
-    if (initialTheme === 'dark' || initialTheme === 'light') {
-      document.documentElement.dataset.cgTheme = initialTheme;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-})();
+const params = new URLSearchParams(window.location.search);
+const initialTheme = params.get('theme');
+if (initialTheme === 'dark' || initialTheme === 'light') {
+  document.documentElement.dataset.cgTheme = initialTheme;
+}
 
 function applyHostTheme(payload = {}) {
   const mode = payload.mode === 'dark' ? 'dark' : 'light';
@@ -31,22 +18,21 @@ function applyHostTheme(payload = {}) {
   if (foreground) document.documentElement.style.setProperty('--cg-text', foreground);
 }
 
-if (IS_EMBEDDED) {
-  window.addEventListener('message', (event) => {
-    if (event.source !== window.parent) return;
-    if (event?.data?.type === 'CG_THEME') {
-      applyHostTheme(event.data.payload || {});
-    }
-  });
-
-  try {
-    window.parent?.postMessage({ type: 'CG_THEME_REQUEST' }, '*');
-  } catch {
-    // Parent may not be ready during the first microtask.
+window.addEventListener('message', (event) => {
+  if (event.source !== window.parent) return;
+  if (event?.data?.type === 'CG_THEME') {
+    applyHostTheme(event.data.payload || {});
   }
+});
+
+try {
+  window.parent?.postMessage({ type: 'CG_THEME_REQUEST' }, '*');
+} catch {
+  // The dock will send the theme again when the frame reports readiness.
 }
 
-root.render(
+const container = document.getElementById('root');
+createRoot(container).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
