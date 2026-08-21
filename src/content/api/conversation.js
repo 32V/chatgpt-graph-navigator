@@ -4,7 +4,7 @@
 
 import { API_ENDPOINTS } from '../../shared/constants.js';
 import { delay, log, retry } from '../../shared/utils.js';
-import { buildAuthHeaders, clearAuthCache } from '../auth/token-manager.js';
+import { buildAuthHeaders, loadToken } from '../auth/token-manager.js';
 
 async function fetchConversation(conversationId, isAuthRetry = false) {
   const response = await fetch(`${API_ENDPOINTS.CONVERSATION}/${conversationId}`, {
@@ -25,9 +25,9 @@ async function fetchConversation(conversationId, isAuthRetry = false) {
   }
 
   if (response.status === 401) {
-    clearAuthCache();
     if (!isAuthRetry) {
       await delay(500);
+      await loadToken();
       return fetchConversation(conversationId, true);
     }
     throw new Error('Authentication failed (401). Sign in to ChatGPT and refresh the page.');
