@@ -133,6 +133,10 @@ body.cg-graph-dock-visible main {
   filter: var(--cg-dock-icon-filter, none);
 }
 
+#__chatgpt_graph_docked_panel__[data-view-mode="tree"] [data-action="minimap"] {
+  display: none;
+}
+
 #__chatgpt_graph_docked_panel__ .cg-dock-collapse {
   margin-left: 1px;
   font-size: 19px;
@@ -170,6 +174,7 @@ body.cg-graph-dock-visible main {
 
 #__chatgpt_graph_docked_panel__.cg-dock-collapsed .cg-dock-title,
 #__chatgpt_graph_docked_panel__.cg-dock-collapsed .cg-dock-segment,
+#__chatgpt_graph_docked_panel__.cg-dock-collapsed [data-action="minimap"],
 #__chatgpt_graph_docked_panel__.cg-dock-collapsed [data-action="refresh"],
 #__chatgpt_graph_docked_panel__.cg-dock-collapsed .cg-dock-body {
   display: none;
