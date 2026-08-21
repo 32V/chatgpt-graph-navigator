@@ -3,13 +3,11 @@ import { Handle, Position } from '@xyflow/react';
 
 const PREVIEW_LIMIT = 72;
 const COMPACT_PREVIEW_LIMIT = 58;
-const EXPANDED_LIMIT = 300;
 
 function truncate(text, maxLength) {
   if (!text) return '';
   const cleaned = text.replace(/\s+/g, ' ').trim();
-  if (cleaned.length <= maxLength) return cleaned;
-  return `${cleaned.slice(0, maxLength)}…`;
+  return cleaned.length <= maxLength ? cleaned : `${cleaned.slice(0, maxLength)}…`;
 }
 
 function UserIcon() {
@@ -59,7 +57,7 @@ function ExpandIcon({ expanded }) {
 }
 
 function QANode({ data, selected }) {
-  const [isContentExpanded, setIsContentExpanded] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
 
   const {
     nodeType,
@@ -76,14 +74,11 @@ function QANode({ data, selected }) {
 
   const isQuestion = nodeType === 'question';
   const normalizedContent = (content || '').replace(/\s+/g, ' ').trim();
+  const stopEvent = useCallback(event => event.stopPropagation(), []);
 
-  const stopEvent = useCallback((event) => {
+  const toggleDetails = useCallback((event) => {
     event.stopPropagation();
-  }, []);
-
-  const toggleContentExpand = useCallback((event) => {
-    event.stopPropagation();
-    setIsContentExpanded(value => !value);
+    setShowDetails(value => !value);
   }, []);
 
   const toggleAnswerExpand = useCallback((event) => {
@@ -92,7 +87,6 @@ function QANode({ data, selected }) {
   }, [onExpandAnswer, nodeId]);
 
   if (isInlineExpandedAnswer) {
-    const compactText = truncate(preview || content, COMPACT_PREVIEW_LIMIT);
     return (
       <article
         className={`qa-node answer compact-answer ${isSelected ? 'on-path' : ''} ${selected ? 'selected' : ''}`}
@@ -100,11 +94,9 @@ function QANode({ data, selected }) {
         aria-current={selected ? 'true' : undefined}
       >
         <Handle type="target" position={Position.Top} className="qa-node-handle" />
-        <span className="qa-node-compact-icon" aria-hidden="true">
-          <AssistantIcon />
-        </span>
+        <span className="qa-node-compact-icon" aria-hidden="true"><AssistantIcon /></span>
         <p className="qa-node-compact-text" title={content}>
-          {compactText || 'Empty response'}
+          {truncate(preview || content, COMPACT_PREVIEW_LIMIT) || 'Empty response'}
         </p>
         <div className="qa-node-path-indicator" aria-hidden="true" />
         <Handle type="source" position={Position.Bottom} className="qa-node-handle" />
@@ -112,9 +104,6 @@ function QANode({ data, selected }) {
     );
   }
 
-  const displayText = isContentExpanded
-    ? truncate(content, EXPANDED_LIMIT)
-    : truncate(preview || content, PREVIEW_LIMIT);
   const hasMore = normalizedContent.length > PREVIEW_LIMIT;
 
   return (
@@ -158,24 +147,39 @@ function QANode({ data, selected }) {
           {hasMore && (
             <button
               className="qa-node-icon-btn qa-node-expand-btn"
-              onClick={toggleContentExpand}
+              onClick={toggleDetails}
               onMouseDown={stopEvent}
-              title={isContentExpanded ? 'Show less' : 'Show full message'}
-              aria-label={isContentExpanded ? 'Show less' : 'Show full message'}
-              aria-pressed={isContentExpanded}
+              title={showDetails ? 'Hide full message' : 'Show full message'}
+              aria-label={showDetails ? 'Hide full message' : 'Show full message'}
+              aria-expanded={showDetails}
               type="button"
             >
-              <ExpandIcon expanded={isContentExpanded} />
+              <ExpandIcon expanded={showDetails} />
             </button>
           )}
         </div>
       </div>
 
       <div className="qa-node-content">
-        <p className={`qa-node-text ${isContentExpanded ? 'expanded' : ''}`} title={content}>
-          {displayText || <em className="qa-node-empty">Empty message</em>}
+        <p className="qa-node-text" title={content}>
+          {truncate(preview || content, PREVIEW_LIMIT) || <em className="qa-node-empty">Empty message</em>}
         </p>
       </div>
+
+      {showDetails && (
+        <div
+          className="qa-node-detail nodrag nopan nowheel"
+          role="dialog"
+          aria-label={isQuestion ? 'Full user message' : 'Full ChatGPT message'}
+          onClick={stopEvent}
+          onDoubleClick={stopEvent}
+          onMouseDown={stopEvent}
+          onPointerDown={stopEvent}
+          onWheel={stopEvent}
+        >
+          {normalizedContent || 'Empty message'}
+        </div>
+      )}
 
       <div className="qa-node-path-indicator" aria-hidden="true" />
       <Handle type="source" position={Position.Bottom} className="qa-node-handle" />
