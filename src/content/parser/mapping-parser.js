@@ -139,9 +139,10 @@ export function parseMapping(mapping, conversationId) {
       createTime: Number.isFinite(createTime) ? createTime : 0,
       parent: findValidAncestor(nodeId),
       children: findValidDescendants(nodeId),
-      // Used only to identify native sibling groups when every valid ancestor
-      // was filtered from the normalized graph.
-      branchParentId: rawNode.parent || null,
+      // The native parent is not canonical graph ancestry. Branch navigation
+      // uses it only to keep root-level native sibling groups separated after
+      // system/tool intermediary nodes are filtered out.
+      _rawParent: rawNode.parent || null,
       metadata: pickStreamMetadata(message.metadata)
     });
   }
