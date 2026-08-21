@@ -7,7 +7,6 @@ const TARGET_URLS = [
   'https://chat.openai.com/*'
 ];
 
-const TOKEN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 let latestToken = '';
 
 export function initTokenCapture() {
@@ -45,38 +44,6 @@ function onSendHeaders(details) {
       console.error('[TokenCapture] Failed to persist token:', error);
     });
     return;
-  }
-}
-
-export async function getTokenStatus() {
-  try {
-    const result = await chrome.storage.local.get([
-      'accessToken',
-      'tokenTimestamp',
-      'tokenSource'
-    ]);
-
-    if (!result.accessToken) {
-      return { hasToken: false, source: null, age: null, isExpired: true };
-    }
-
-    const age = Date.now() - (result.tokenTimestamp || 0);
-    return {
-      hasToken: true,
-      source: result.tokenSource || 'unknown',
-      age,
-      ageMinutes: Math.floor(age / 60000),
-      isExpired: age >= TOKEN_MAX_AGE_MS,
-      tokenLength: result.accessToken.length
-    };
-  } catch (error) {
-    return {
-      hasToken: false,
-      source: null,
-      age: null,
-      isExpired: true,
-      error: error.message
-    };
   }
 }
 
