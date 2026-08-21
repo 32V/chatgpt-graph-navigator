@@ -1,68 +1,51 @@
 # Privacy Policy for ChatGPT Graph Navigator
 
-**Last Updated: February 2026**s
+**Last updated: August 2026**
 
-## Overview
+ChatGPT Graph Navigator is a browser extension that visualizes and navigates branched ChatGPT conversations. Its data processing happens locally in the browser.
 
-ChatGPT Graph Navigator is a browser extension that visualizes your ChatGPT conversations as navigable knowledge graphs. We are committed to protecting your privacy.
+## Data the extension accesses
 
-## Data Collection
+The extension accesses only information needed to operate on ChatGPT:
 
-**We do NOT collect, store, or transmit any of your personal data to external servers.**
+- **ChatGPT access token** — captured from ChatGPT requests, or entered manually as a fallback, and stored in `chrome.storage.local`.
+- **ChatGPT conversation data** — requested directly from ChatGPT's own backend API so the extension can reconstruct conversation nodes, edges, and the currently active branch.
+- **Extension preferences** — panel state, graph settings, message-collapse settings, and developer logging preferences.
 
-### What data the extension accesses:
+## Local storage
 
-1. **ChatGPT Authentication Token**
-   - Stored locally in your browser's storage
-   - Used only to communicate with ChatGPT's official API
-   - Never sent to any third-party servers
+The extension stores data only in the current browser profile:
 
-2. **Conversation Data**
-   - Read directly from ChatGPT's API
-   - Processed entirely within your browser
-   - Never uploaded or shared externally
+- `chrome.storage.local` stores the ChatGPT access token and extension preferences.
+- IndexedDB stores canonical conversation metadata plus the normalized graph nodes and edges used by the navigator.
 
-### What data the extension does NOT access:
+`chrome.storage.local` is local extension storage; the extension does not use Chrome sync storage.
 
-- Your email or account credentials
-- Your browsing history outside of ChatGPT
-- Any files on your computer
+Removing the extension removes its extension-owned local data. The stored ChatGPT token can also be cleared from the extension popup.
 
-## Data Storage
+## Network communication
 
-All data is stored locally using Chrome's built-in storage APIs:
-- `chrome.storage.local` - For settings and cached data
-- Data remains on your device and syncs only if you enable Chrome sync
+The extension communicates with ChatGPT domains only:
 
-## Third-Party Services
+- `https://chatgpt.com/`
+- `https://chat.openai.com/`
 
-This extension communicates only with:
-- `chatgpt.com` / `chat.openai.com` - Official ChatGPT APIs
+Conversation and authentication requests are sent to ChatGPT over HTTPS. The extension does not send conversation data or access tokens to a server operated by this project.
 
-No analytics, tracking, or advertising services are used.
+## Analytics and third parties
 
-## Data Security
+The extension does not include analytics, advertising, tracking pixels, telemetry services, or third-party data collection.
 
-- All communication with ChatGPT uses HTTPS encryption
-- Your token is stored securely in browser storage
-- No data is transmitted to any servers we control
+## Browser access
 
-## Your Rights
+The extension is scoped to ChatGPT pages. It does not read arbitrary websites, local computer files, passwords, or browser history outside the permissions required to identify and communicate with active ChatGPT tabs.
 
-You can:
-- Clear all stored data by removing the extension
-- Clear your token via the extension's settings
-- Review what data is stored via Chrome DevTools
+## Changes
 
-## Changes to This Policy
-
-We may update this privacy policy from time to time. Any changes will be reflected in the "Last Updated" date.
+This policy may be updated when the extension's behavior changes. The date above reflects the latest revision.
 
 ## Contact
 
-If you have questions about this privacy policy, please open an issue at:
-https://github.com/anthropics/claude-code/issues
+For questions or bug reports, open an issue in this repository:
 
----
-
-**Summary: Your data stays on your device. We don't collect anything.**
+https://github.com/32V/chatgpt-graph-navigator/issues

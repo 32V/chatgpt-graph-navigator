@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-i18n-title="setupTitle">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -49,90 +49,44 @@
       color: var(--text);
       font: 14px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-
-    .page {
-      width: min(680px, calc(100% - 36px));
-      margin: 0 auto;
-      padding: 56px 0 72px;
-    }
-
+    .page { width: min(680px, calc(100% - 36px)); margin: 0 auto; padding: 56px 0 72px; }
     .brand { display: flex; align-items: center; gap: 10px; color: var(--muted); font-weight: 600; }
     .brand img { width: 34px; height: 34px; border-radius: 9px; }
     h1 { margin: 28px 0 8px; font-size: clamp(28px, 5vw, 38px); line-height: 1.15; letter-spacing: -.025em; }
     .lead { margin: 0; max-width: 560px; color: var(--muted); font-size: 15px; }
-
-    .card {
-      margin-top: 32px;
-      padding: 22px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-    }
-
+    .card { margin-top: 32px; padding: 22px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
     .card h2 { margin: 0 0 8px; font-size: 16px; }
     .card p { margin: 0; color: var(--muted); }
     .steps { margin: 18px 0 22px; padding-left: 22px; color: var(--muted); }
     .steps li { margin: 7px 0; }
     .steps strong { color: var(--text); }
     code { padding: 2px 5px; border-radius: 5px; background: var(--bg); color: var(--text); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-
     label { display: block; margin: 18px 0 8px; font-weight: 600; }
     textarea {
-      width: 100%;
-      min-height: 116px;
-      resize: vertical;
-      padding: 12px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      outline: none;
-      background: var(--bg);
-      color: var(--text);
+      width: 100%; min-height: 116px; resize: vertical; padding: 12px;
+      border: 1px solid var(--border); border-radius: 10px; outline: none;
+      background: var(--bg); color: var(--text);
       font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
     textarea:focus { border-color: var(--subtle); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent); }
-
     .buttons { display: flex; gap: 9px; margin-top: 14px; }
     button {
-      min-height: 38px;
-      padding: 8px 14px;
-      border: 1px solid var(--border);
-      border-radius: 9px;
-      background: var(--surface);
-      color: var(--text);
-      font: inherit;
-      font-weight: 600;
-      cursor: pointer;
+      min-height: 38px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 9px;
+      background: var(--surface); color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
     }
     button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
     button:disabled { opacity: .42; cursor: not-allowed; }
-
     #alert-container { margin-top: 14px; }
     .alert { padding: 10px 12px; border-radius: 9px; }
     .alert.success { color: var(--success); background: var(--success-bg); }
     .alert.warning { color: var(--warning); background: var(--warning-bg); }
     .alert.error { color: var(--error); background: var(--error-bg); }
-
     .loading {
-      display: inline-block;
-      width: 13px;
-      height: 13px;
-      margin-right: 7px;
-      vertical-align: -2px;
-      border: 2px solid currentColor;
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin .7s linear infinite;
+      display: inline-block; width: 13px; height: 13px; margin-right: 7px; vertical-align: -2px;
+      border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-
-    .notice {
-      margin-top: 18px;
-      padding-top: 18px;
-      border-top: 1px solid var(--border-light);
-      color: var(--subtle);
-      font-size: 12px;
-    }
-
+    .notice { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border-light); color: var(--subtle); font-size: 12px; }
     @media (max-width: 560px) {
       .page { padding-top: 32px; }
       .card { padding: 17px; }
@@ -147,7 +101,7 @@
       <span>ChatGPT Graph Navigator</span>
     </div>
 
-    <h1 data-i18n="setupTitle">Token setup</h1>
+    <h1>Token setup</h1>
     <p class="lead">The extension normally captures the ChatGPT access token automatically. Use this page only when automatic capture is unavailable or you need to replace the stored token.</p>
 
     <section class="card">
@@ -160,16 +114,13 @@
       </ol>
 
       <div id="alert-container"></div>
-
       <label for="token-input">Access token</label>
-      <textarea id="token-input" spellcheck="false" autocomplete="off" data-i18n-placeholder="tokenPlaceholder" placeholder="Paste the token here"></textarea>
-
+      <textarea id="token-input" spellcheck="false" autocomplete="off" placeholder="Paste the token here"></textarea>
       <div class="buttons">
-        <button id="test-btn" type="button" data-i18n="testTokenBtn">Test token</button>
-        <button id="save-btn" class="primary" type="button" disabled data-i18n="saveCompleteBtn">Save</button>
+        <button id="test-btn" type="button">Test token</button>
+        <button id="save-btn" class="primary" type="button" disabled>Save</button>
       </div>
-
-      <p class="notice">The token is stored in Chrome extension storage on this browser profile. You can clear it later from the extension settings popup.</p>
+      <p class="notice">The token is stored in Chrome extension storage in this browser profile. You can clear it later from the extension settings popup.</p>
     </section>
   </main>
 

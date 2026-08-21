@@ -37,15 +37,11 @@ function orderGroupByParentChain(group) {
 
   for (const node of group) {
     if (!node.parent || !ids.has(node.parent)) continue;
-    if (!childrenByParent.has(node.parent)) {
-      childrenByParent.set(node.parent, []);
-    }
+    if (!childrenByParent.has(node.parent)) childrenByParent.set(node.parent, []);
     childrenByParent.get(node.parent).push(node);
   }
 
-  for (const children of childrenByParent.values()) {
-    children.sort(compareByFallbackOrder);
-  }
+  for (const children of childrenByParent.values()) children.sort(compareByFallbackOrder);
 
   const roots = group
     .filter(node => !node.parent || !ids.has(node.parent))
@@ -57,23 +53,11 @@ function orderGroupByParentChain(group) {
     if (!node || visited.has(node.id)) return;
     visited.add(node.id);
     ordered.push(node);
-
-    for (const child of childrenByParent.get(node.id) || []) {
-      visit(child);
-    }
+    for (const child of childrenByParent.get(node.id) || []) visit(child);
   };
 
   roots.forEach(visit);
-
-  group
-    .slice()
-    .sort(compareByFallbackOrder)
-    .forEach(node => {
-      if (!visited.has(node.id)) {
-        visit(node);
-      }
-    });
-
+  group.slice().sort(compareByFallbackOrder).forEach(visit);
   return ordered;
 }
 
@@ -83,10 +67,6 @@ function isAssistant(node) {
 
 function isThinkingPreamble(node) {
   return isAssistant(node) && node.metadata?.is_thinking_preamble_message === true;
-}
-
-function getTurnExchangeId(node) {
-  return node?.metadata?.turn_exchange_id || null;
 }
 
 function mergeStreamContent(nodes) {
@@ -114,36 +94,30 @@ function buildEdgesFromNodes(nodes, conversationId) {
         target: node.id,
         sourceRole: parent?.role,
         targetRole: node.role,
-        orderKey: node.createTime || parent?.createTime || Date.now() / 1000
+        orderKey: node.createTime || parent?.createTime || 0
       };
     });
 }
 
 function getExternalParent(group) {
   const ids = new Set(group.map(node => node.id));
-  const ordered = orderGroupByParentChain(group);
-  return ordered.find(node => node.parent && !ids.has(node.parent))?.parent || null;
+  return orderGroupByParentChain(group)
+    .find(node => node.parent && !ids.has(node.parent))?.parent || null;
 }
 
 function chooseKeepNode(group, mode) {
   const ordered = orderGroupByParentChain(group);
-
-  if (mode === ASSISTANT_STREAM_OUTPUT_MODES.MERGE_ALL) {
-    return ordered[0];
-  }
+  if (mode === ASSISTANT_STREAM_OUTPUT_MODES.MERGE_ALL) return ordered[0];
 
   const nonPreamble = ordered.filter(node => !isThinkingPreamble(node));
-  return nonPreamble[nonPreamble.length - 1] || ordered[ordered.length - 1];
+  return nonPreamble.at(-1) || ordered.at(-1);
 }
 
 function buildIncrementalGroups(nodes) {
   const groups = new Map();
 
   for (const node of nodes) {
-    if (!isAssistant(node) || node.metadata?.is_incremental !== true) {
-      continue;
-    }
-
+    if (!isAssistant(node) || node.metadata?.is_incremental !== true) continue;
     const key = node.metadata?.stream_group_key || `incremental-parent:${node.parent || 'root'}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(node);
@@ -153,29 +127,22 @@ function buildIncrementalGroups(nodes) {
 }
 
 function buildThinkingPreambleGroups(nodes) {
-  const byTurnExchange = new Map();
+  const groups = new Map();
 
   for (const node of nodes) {
     if (!isAssistant(node)) continue;
-
-    const turnExchangeId = getTurnExchangeId(node);
-    if (!turnExchangeId) continue;
-
-    if (!byTurnExchange.has(turnExchangeId)) {
-      byTurnExchange.set(turnExchangeId, []);
-    }
-    byTurnExchange.get(turnExchangeId).push(node);
+    const exchangeId = node.metadata?.turn_exchange_id;
+    if (!exchangeId) continue;
+    if (!groups.has(exchangeId)) groups.set(exchangeId, []);
+    groups.get(exchangeId).push(node);
   }
 
-  return Array.from(byTurnExchange.values())
+  return Array.from(groups.values())
     .filter(group => group.length > 1 && group.some(isThinkingPreamble));
 }
 
 function applyGroup(normalizedById, group, mode) {
-  const liveGroup = group
-    .map(node => normalizedById.get(node.id))
-    .filter(Boolean);
-
+  const liveGroup = group.map(node => normalizedById.get(node.id)).filter(Boolean);
   if (liveGroup.length <= 1) return;
 
   const keep = chooseKeepNode(liveGroup, mode);
@@ -193,9 +160,7 @@ function applyGroup(normalizedById, group, mode) {
   }
 
   for (const node of liveGroup) {
-    if (node.id !== keep.id) {
-      normalizedById.delete(node.id);
-    }
+    if (node.id !== keep.id) normalizedById.delete(node.id);
   }
 
   const nextKeep = {
@@ -219,22 +184,15 @@ function applyGroup(normalizedById, group, mode) {
   normalizedById.set(keep.id, nextKeep);
 
   for (const node of normalizedById.values()) {
-    if (groupIds.has(node.parent) && node.id !== keep.id) {
-      node.parent = keep.id;
-    }
+    if (groupIds.has(node.parent) && node.id !== keep.id) node.parent = keep.id;
   }
 }
 
-export function normalizeAssistantStreamNodes(
-  nodes,
-  options = {}
-) {
+export function normalizeAssistantStreamNodes(nodes, options = {}) {
   const mode = options.mode || DEFAULT_ASSISTANT_STREAM_SETTINGS.mode;
   const conversationId = options.conversationId || 'unknown';
 
-  if (!Array.isArray(nodes) || nodes.length === 0) {
-    return { nodes: [], edges: [] };
-  }
+  if (!Array.isArray(nodes) || nodes.length === 0) return { nodes: [], edges: [] };
 
   const normalizedById = new Map(nodes.map(node => [
     node.id,
@@ -245,9 +203,7 @@ export function normalizeAssistantStreamNodes(
   ]));
 
   for (const node of Array.from(normalizedById.values())) {
-    if (isAssistant(node) && !(node.content || '').trim()) {
-      normalizedById.delete(node.id);
-    }
+    if (isAssistant(node) && !(node.content || '').trim()) normalizedById.delete(node.id);
   }
 
   const sourceNodes = Array.from(normalizedById.values());
@@ -255,26 +211,18 @@ export function normalizeAssistantStreamNodes(
     ...buildThinkingPreambleGroups(sourceNodes),
     ...buildIncrementalGroups(sourceNodes)
   ];
-
-  for (const group of groups) {
-    applyGroup(normalizedById, group, mode);
-  }
+  for (const group of groups) applyGroup(normalizedById, group, mode);
 
   const normalizedNodes = Array.from(normalizedById.values());
   const normalizedNodeMap = new Map(normalizedNodes.map(node => [node.id, node]));
-
-  normalizedNodes.forEach(node => {
-    node.children = [];
-  });
+  normalizedNodes.forEach(node => { node.children = []; });
 
   normalizedNodes
     .filter(node => node.parent && normalizedNodeMap.has(node.parent))
     .sort((a, b) => (a.createTime || 0) - (b.createTime || 0))
     .forEach(node => {
       const parent = normalizedNodeMap.get(node.parent);
-      if (!parent.children.includes(node.id)) {
-        parent.children.push(node.id);
-      }
+      if (!parent.children.includes(node.id)) parent.children.push(node.id);
     });
 
   return {

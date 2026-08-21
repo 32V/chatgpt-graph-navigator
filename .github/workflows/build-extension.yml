@@ -37,6 +37,15 @@ jobs:
       - name: Test edit-pagination compatibility
         run: node scripts/test-edit-pagination-compat.mjs
 
+      - name: Test canonical current node
+        run: node scripts/test-current-node.mjs
+
+      - name: Test QA tree model
+        run: node scripts/test-qa-tree-model.mjs
+
+      - name: Test assistant stream normalization
+        run: node scripts/test-assistant-stream-normalizer.mjs
+
       - name: Test stable graph layout
         run: node scripts/test-qa-tree-layout.mjs
 
@@ -50,15 +59,20 @@ jobs:
           test -f release/manifest.json
           test -f release/dist/edit-pagination-compat.js
           test -f release/dist/docked-panel.js
-          test -f release/dist/docked-panel-theme.css
+          test -f release/dist/docked-panel.css
           test -f release/dist/content.js
           test -f release/dist/background.js
+          test -f release/dist/popup.js
+          test -f release/dist/setup.js
           test -f release/dist/sidepanel.js
           test -f release/dist/sidepanel.css
-          test -f release/dist/chatgpt-theme.css
-          test -f release/dist/graph-ux.css
           test -f release/src/popup/index.html
+          test -f release/src/setup/index.html
           test -f release/src/sidepanel/index.html
+          test ! -d release/_locales
+          test ! -f release/dist/docked-panel-theme.css
+          test ! -f release/dist/chatgpt-theme.css
+          test ! -f release/dist/graph-ux.css
           node -e "JSON.parse(require('fs').readFileSync('release/manifest.json', 'utf8')); console.log('manifest.json is valid JSON')"
 
       - name: Upload ready-to-load extension

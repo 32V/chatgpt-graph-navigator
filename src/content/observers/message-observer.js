@@ -1,11 +1,14 @@
 /**
- * Watches the mounted ChatGPT DOM for message changes.
- * The observer only emits change signals; canonical graph topology is refreshed
- * from the conversation API by the content script.
+ * Watches mounted ChatGPT turns for message-ID changes.
+ *
+ * This observer deliberately does not infer graph ancestry or extract message
+ * content. It only reports `{ id, role }` so the content script can refresh the
+ * canonical backend mapping. Tracking the last ID per DOM container also makes
+ * native edited-message branch switches observable, including switches back to
+ * an already visited sibling.
  */
 
 import { log } from '../../shared/utils.js';
-import { extractMessageFromDOM } from '../extractors/message-extractor.js';
 import {
   getStableMessageId,
   getAllMessageContainers,
@@ -18,189 +21,138 @@ export class MessageObserver {
     this.observer = null;
     this.callback = null;
     this.isRunning = false;
-    this.processedMessages = new Set();
-    this.pendingMessages = new Map();
-    this.pendingIdObservers = new WeakMap();
-    this.pendingIdArticles = new Set();
+    this.lastIdByContainer = new WeakMap();
+    this.pendingAssistantTimers = new Map();
     this.periodicScanInterval = null;
   }
 
   start(callback) {
-    if (this.isRunning) {
-      log('warn', 'MessageObserver', 'Observer already running');
+    if (this.isRunning) return;
+
+    const targetNode = document.querySelector('main') || document.body;
+    if (!targetNode) {
+      log('error', 'MessageObserver', 'Target node (main/body) not found');
       return;
     }
 
     this.callback = callback;
     this.isRunning = true;
-
-    let initCount = 0;
-    getAllMessageContainers().forEach((container) => {
-      const uniqueId = getStableMessageId(container);
-      if (uniqueId) {
-        this.processedMessages.add(uniqueId);
-        initCount += 1;
-      } else if (!this.pendingIdObservers.has(container)) {
-        this._watchForMessageId(container);
-      }
-    });
-
-    const targetNode = document.querySelector('main') || document.body;
-    if (!targetNode) {
-      this.isRunning = false;
-      log('error', 'MessageObserver', 'Target node (main/body) not found');
-      return;
-    }
+    this._seedMountedContainers();
 
     this.observer = new MutationObserver(mutations => this._handleMutations(mutations));
     this.observer.observe(targetNode, {
       childList: true,
       subtree: true,
-      attributes: false,
-      characterData: false
+      attributes: true,
+      attributeFilter: ['data-message-id', 'data-turn-id']
     });
 
     this._startPeriodicScan();
-    log('info', 'MessageObserver', 'Message observer started', { existingMessages: initCount });
   }
 
   stop() {
     this.observer?.disconnect();
     this.observer = null;
     this._stopPeriodicScan();
-
-    this.processedMessages.clear();
-    this.pendingMessages.forEach(timer => clearTimeout(timer));
-    this.pendingMessages.clear();
-    this._cleanupAllPendingIdObservers();
-
+    this._clearPendingAssistantTimers();
+    this.lastIdByContainer = new WeakMap();
+    this.callback = null;
     this.isRunning = false;
+  }
+
+  reset() {
+    this._clearPendingAssistantTimers();
+    this.lastIdByContainer = new WeakMap();
+    this._seedMountedContainers();
+  }
+
+  _seedMountedContainers() {
+    getAllMessageContainers().forEach((container) => {
+      const id = getStableMessageId(container);
+      if (id && !id.startsWith('placeholder-')) {
+        this.lastIdByContainer.set(container, id);
+      }
+    });
   }
 
   _handleMutations(mutations) {
     for (const mutation of mutations) {
-      mutation.addedNodes.forEach((node) => {
-        if (node.nodeType === Node.ELEMENT_NODE) this._checkForNewMessage(node);
-      });
+      if (mutation.type === 'attributes') {
+        const container = findMessageContainer(mutation.target);
+        if (container) this._processContainer(container);
+        continue;
+      }
+
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) this._processNode(node);
+      }
     }
   }
 
-  _checkForNewMessage(node) {
+  _processNode(node) {
     const containers = new Set();
-
     if (isMessageContainer(node)) containers.add(node);
 
-    const directContainer = findMessageContainer(node);
-    if (directContainer) containers.add(directContainer);
+    const containingTurn = findMessageContainer(node);
+    if (containingTurn) containers.add(containingTurn);
 
     if (node.querySelectorAll) {
       getAllMessageContainers(node).forEach(container => containers.add(container));
-      node.querySelectorAll('[data-message-author-role][data-message-id]').forEach((messageNode) => {
-        const container = findMessageContainer(messageNode);
-        if (container) containers.add(container);
-      });
     }
 
-    containers.forEach(container => this._processNewContainer(container));
+    containers.forEach(container => this._processContainer(container));
   }
 
-  _processNewContainer(container) {
-    const uniqueId = getStableMessageId(container);
+  _processContainer(container) {
+    const id = getStableMessageId(container);
+    if (!id || id.startsWith('placeholder-')) return;
 
-    if (!uniqueId || uniqueId.startsWith('placeholder-')) {
-      if (!this.pendingIdObservers.has(container)) this._watchForMessageId(container);
+    const previousId = this.lastIdByContainer.get(container);
+    if (previousId === id) return;
+    this.lastIdByContainer.set(container, id);
+
+    const role = this._getRole(container);
+    if (role !== 'user' && role !== 'assistant') return;
+
+    if (role === 'assistant' && this._isMessageStreaming()) {
+      this._waitForAssistantCompletion(container, id);
       return;
     }
 
-    this._cleanupPendingIdObserver(container);
-    if (this.processedMessages.has(uniqueId)) return;
-
-    let role = container.getAttribute('data-turn');
-    if (!role) {
-      role = container.querySelector('[data-message-author-role]')
-        ?.getAttribute('data-message-author-role');
-    }
-
-    this.processedMessages.add(uniqueId);
-
-    if (role === 'user') {
-      this._extractAndNotify(container, uniqueId);
-    } else if (role === 'assistant') {
-      this._waitForAssistantMessage(container, uniqueId);
-    }
+    this._notify({ id, role });
   }
 
-  _watchForMessageId(container) {
-    const TIMEOUT_MS = 10000;
-
-    const observer = new MutationObserver(() => {
-      const uniqueId = getStableMessageId(container);
-      if (uniqueId && !uniqueId.startsWith('placeholder-')) {
-        this._cleanupPendingIdObserver(container);
-        this._processNewContainer(container);
-      }
-    });
-
-    const timeoutId = setTimeout(() => {
-      this._cleanupPendingIdObserver(container);
-      log('warn', 'MessageObserver', 'Timeout waiting for message-id', {
-        turnId: container.getAttribute('data-turn-id')
-      });
-    }, TIMEOUT_MS);
-
-    this.pendingIdObservers.set(container, { observer, timeoutId });
-    this.pendingIdArticles.add(container);
-
-    observer.observe(container, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      attributeFilter: ['data-message-id', 'data-turn-id']
-    });
+  _getRole(container) {
+    const direct = container.getAttribute('data-turn');
+    if (direct === 'user' || direct === 'assistant') return direct;
+    return container.querySelector('[data-message-author-role]')
+      ?.getAttribute('data-message-author-role') || null;
   }
 
-  _cleanupPendingIdObserver(container) {
-    const pending = this.pendingIdObservers.get(container);
-    if (!pending) return;
+  _waitForAssistantCompletion(container, id) {
+    const existing = this.pendingAssistantTimers.get(container);
+    if (existing) clearTimeout(existing.timer);
 
-    pending.observer.disconnect();
-    clearTimeout(pending.timeoutId);
-    this.pendingIdObservers.delete(container);
-    this.pendingIdArticles.delete(container);
-  }
-
-  _cleanupAllPendingIdObservers() {
-    for (const container of this.pendingIdArticles) {
-      const pending = this.pendingIdObservers.get(container);
-      if (!pending) continue;
-      pending.observer.disconnect();
-      clearTimeout(pending.timeoutId);
-    }
-    this.pendingIdArticles.clear();
-  }
-
-  _waitForAssistantMessage(container, uniqueId) {
-    if (this.pendingMessages.has(uniqueId)) {
-      clearTimeout(this.pendingMessages.get(uniqueId));
-    }
-
-    const checkComplete = () => {
-      if (this._isMessageStreaming()) {
-        const timer = setTimeout(checkComplete, 1000);
-        this.pendingMessages.set(uniqueId, timer);
+    const check = () => {
+      const currentId = getStableMessageId(container);
+      if (!document.body.contains(container) || currentId !== id) {
+        this.pendingAssistantTimers.delete(container);
+        if (document.body.contains(container)) this._processContainer(container);
         return;
       }
 
-      this.pendingMessages.delete(uniqueId);
-      if (document.body.contains(container)) {
-        this._extractAndNotify(container, uniqueId);
-      } else {
-        log('warn', 'MessageObserver', 'Message removed from DOM before completion', uniqueId);
+      if (this._isMessageStreaming()) {
+        const timer = setTimeout(check, 750);
+        this.pendingAssistantTimers.set(container, { id, timer });
+        return;
       }
+
+      this.pendingAssistantTimers.delete(container);
+      this._notify({ id, role: 'assistant' });
     };
 
-    const timer = setTimeout(checkComplete, 500);
-    this.pendingMessages.set(uniqueId, timer);
+    const timer = setTimeout(check, 350);
+    this.pendingAssistantTimers.set(container, { id, timer });
   }
 
   _isMessageStreaming() {
@@ -210,59 +162,21 @@ export class MessageObserver {
     );
   }
 
-  _extractAndNotify(container, uniqueId) {
-    const id = uniqueId || getStableMessageId(container);
-    if (!id) {
-      log('warn', 'MessageObserver', 'Cannot extract unique ID for notification');
-      return;
-    }
-
-    this.processedMessages.add(id);
-    const messageData = extractMessageFromDOM(container);
-    if (!messageData) {
-      log('warn', 'MessageObserver', 'Failed to extract message data from DOM');
-      return;
-    }
-
-    messageData.id = id;
+  _notify(signal) {
     if (!this.callback) return;
-
     try {
-      Promise.resolve(this.callback(messageData)).catch(error => {
-        log('error', 'MessageObserver', 'Callback execution error:', error);
+      Promise.resolve(this.callback(signal)).catch(error => {
+        log('error', 'MessageObserver', 'Callback error:', error);
       });
     } catch (error) {
-      log('error', 'MessageObserver', 'Callback trigger error:', error);
+      log('error', 'MessageObserver', 'Callback error:', error);
     }
-  }
-
-  getProcessedCount() {
-    return this.processedMessages.size;
-  }
-
-  isObserving() {
-    return this.isRunning;
   }
 
   _startPeriodicScan() {
     this._stopPeriodicScan();
-
     this.periodicScanInterval = setInterval(() => {
-      if (this._isMessageStreaming()) return;
-
-      let newCount = 0;
-      getAllMessageContainers().forEach((container) => {
-        const uniqueId = getStableMessageId(container);
-        if (!uniqueId || uniqueId.startsWith('placeholder-') || this.processedMessages.has(uniqueId)) {
-          return;
-        }
-        newCount += 1;
-        this._processNewContainer(container);
-      });
-
-      if (newCount > 0) {
-        log('info', 'MessageObserver', `Periodic scan found ${newCount} new message(s)`);
-      }
+      getAllMessageContainers().forEach(container => this._processContainer(container));
     }, 3000);
   }
 
@@ -272,20 +186,14 @@ export class MessageObserver {
     this.periodicScanInterval = null;
   }
 
-  reset() {
-    this.processedMessages.clear();
-    this.pendingMessages.forEach(timer => clearTimeout(timer));
-    this.pendingMessages.clear();
-    this._cleanupAllPendingIdObservers();
+  _clearPendingAssistantTimers() {
+    for (const { timer } of this.pendingAssistantTimers.values()) clearTimeout(timer);
+    this.pendingAssistantTimers.clear();
   }
 }
 
 export function createMessageObserver(callback) {
   const observer = new MessageObserver();
-  try {
-    observer.start(callback);
-  } catch (error) {
-    log('error', 'MessageObserver', 'Failed to start observer via factory:', error);
-  }
+  observer.start(callback);
   return observer;
 }

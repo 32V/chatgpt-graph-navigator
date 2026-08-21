@@ -1,13 +1,14 @@
 /**
- * Docked conversation graph panel injected into ChatGPT.
- * Behaves like a secondary sidebar: automatic, resizable, collapsible, and
- * theme-synchronized with the host page.
+ * ChatGPT-hosted conversation graph dock.
+ *
+ * This module owns behavior only: route visibility, resize/collapse state, theme
+ * synchronization, and communication with the embedded graph UI. Presentation
+ * lives in `docked-panel.css`.
  */
 
 import { log, throttle } from '../../shared/utils.js';
 
 const PANEL_ID = '__chatgpt_graph_docked_panel__';
-const STYLE_ID = '__chatgpt_graph_docked_panel_style__';
 const BODY_CLASS = 'cg-graph-dock-visible';
 const STORAGE_KEY = 'chatgpt_graph_dock_state_v1';
 const MIN_WIDTH = 260;
@@ -23,7 +24,6 @@ let mediaQuery = null;
 let mediaListener = null;
 let panelMessageListener = null;
 let viewportResizeListener = null;
-let routeTimer = null;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -40,6 +40,7 @@ async function loadState() {
     if (!stored || typeof stored !== 'object') {
       return { width: Math.min(DEFAULT_WIDTH, getMaxPanelWidth()), collapsed: false };
     }
+
     return {
       width: clamp(Number(stored.width) || DEFAULT_WIDTH, MIN_WIDTH, getMaxPanelWidth()),
       collapsed: stored.collapsed === true
@@ -53,162 +54,18 @@ const saveState = throttle(async (state) => {
   try {
     await chrome.storage.local.set({ [STORAGE_KEY]: state });
   } catch {
-    // Best-effort persistence only.
+    // Dock state persistence is best effort.
   }
 }, 120);
-
-function ensureStyles() {
-  const existing = document.getElementById(STYLE_ID);
-  const style = existing || document.createElement('style');
-  style.id = STYLE_ID;
-  style.textContent = `
-    :root {
-      --cg-dock-occupied-width: 0px;
-      --cg-host-bg: rgb(255, 255, 255);
-      --cg-host-fg: rgb(13, 13, 13);
-    }
-
-    body.${BODY_CLASS} main {
-      margin-right: var(--cg-dock-occupied-width) !important;
-      transition: margin-right 160ms cubic-bezier(.2,.8,.2,1);
-    }
-
-    #${PANEL_ID} {
-      position: fixed;
-      inset: 0 0 0 auto;
-      width: var(--cg-dock-panel-width, ${DEFAULT_WIDTH}px);
-      height: 100dvh;
-      z-index: 2147483645;
-      display: flex;
-      flex-direction: column;
-      background: var(--cg-host-bg);
-      color: var(--cg-host-fg);
-      border-left: 1px solid color-mix(in srgb, var(--cg-host-fg) 12%, transparent);
-      overflow: hidden;
-      box-shadow: none;
-      transition: width 160ms cubic-bezier(.2,.8,.2,1), background-color 120ms ease;
-      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color-scheme: light dark;
-    }
-
-    #${PANEL_ID}.cg-dock-resizing {
-      transition: none !important;
-    }
-
-    #${PANEL_ID}.cg-dock-collapsed { width: ${RAIL_WIDTH}px; }
-
-    #${PANEL_ID} .cg-dock-resizer {
-      position: absolute;
-      left: -4px;
-      top: 0;
-      bottom: 0;
-      width: 9px;
-      cursor: ew-resize;
-      z-index: 4;
-      touch-action: none;
-    }
-
-    #${PANEL_ID} .cg-dock-resizer::after {
-      content: '';
-      position: absolute;
-      left: 4px;
-      top: 0;
-      bottom: 0;
-      width: 1px;
-      background: transparent;
-      transition: background-color 120ms ease;
-    }
-
-    #${PANEL_ID} .cg-dock-resizer:hover::after,
-    #${PANEL_ID}.cg-dock-resizing .cg-dock-resizer::after {
-      background: color-mix(in srgb, var(--cg-host-fg) 30%, transparent);
-    }
-
-    #${PANEL_ID}.cg-dock-collapsed .cg-dock-resizer { display: none; }
-
-    #${PANEL_ID} .cg-dock-header {
-      height: 44px;
-      min-height: 44px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 0 8px;
-      border-bottom: 1px solid color-mix(in srgb, var(--cg-host-fg) 10%, transparent);
-      background: var(--cg-host-bg);
-    }
-
-    #${PANEL_ID}.cg-dock-collapsed .cg-dock-header {
-      height: 100%;
-      min-height: 0;
-      padding: 6px 4px;
-      flex-direction: column;
-      border-bottom: 0;
-      justify-content: flex-start;
-    }
-
-    #${PANEL_ID} .cg-dock-title {
-      min-width: 0;
-      margin-right: auto;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    #${PANEL_ID} .cg-dock-segment {
-      display: inline-flex;
-      align-items: center;
-      gap: 2px;
-      padding: 2px;
-    }
-
-    #${PANEL_ID} .cg-dock-button {
-      width: 28px;
-      height: 28px;
-      border: 0;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex: 0 0 auto;
-      background: transparent;
-      color: inherit;
-      cursor: pointer;
-    }
-
-    #${PANEL_ID} .cg-dock-button img {
-      width: 16px;
-      height: 16px;
-      filter: var(--cg-dock-icon-filter, none);
-    }
-
-    #${PANEL_ID}.cg-dock-collapsed .cg-dock-title,
-    #${PANEL_ID}.cg-dock-collapsed .cg-dock-segment,
-    #${PANEL_ID}.cg-dock-collapsed [data-action="refresh"] { display: none; }
-
-    #${PANEL_ID} .cg-dock-body {
-      flex: 1 1 auto;
-      min-height: 0;
-      background: var(--cg-host-bg);
-    }
-
-    #${PANEL_ID}.cg-dock-collapsed .cg-dock-body { display: none; }
-
-    #${PANEL_ID} iframe {
-      width: 100%;
-      height: 100%;
-      display: block;
-      border: 0;
-      background: var(--cg-host-bg);
-    }
-  `;
-  if (!existing) document.documentElement.appendChild(style);
-}
 
 function getPanel() {
   return document.getElementById(PANEL_ID);
 }
 
 function parseRgb(color) {
-  const match = String(color || '').match(/rgba?\((\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)/i);
+  const match = String(color || '').match(
+    /rgba?\((\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)/i
+  );
   if (!match) return null;
   return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
@@ -221,25 +78,33 @@ function luminance(color) {
   const rgb = parseRgb(color);
   if (!rgb) return 1;
   const channels = rgb.map((value) => {
-    const c = value / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    const channel = value / 255;
+    return channel <= 0.03928
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
   });
   return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
 }
 
 function readChatGptTheme() {
-  const elements = [document.querySelector('main'), document.body, document.documentElement].filter(Boolean);
+  const elements = [
+    document.querySelector('main'),
+    document.body,
+    document.documentElement
+  ].filter(Boolean);
+
   let background = '';
   let foreground = '';
-
   for (const element of elements) {
     const style = getComputedStyle(element);
     if (!background && !isTransparent(style.backgroundColor)) background = style.backgroundColor;
     if (!foreground && style.color) foreground = style.color;
   }
 
-  const darkClass = document.documentElement.classList.contains('dark') || document.body?.classList.contains('dark');
-  const dark = darkClass || (background ? luminance(background) < 0.32 : false);
+  const hasDarkClass = document.documentElement.classList.contains('dark') ||
+    document.body?.classList.contains('dark');
+  const dark = hasDarkClass || (background ? luminance(background) < 0.32 : false);
+
   return {
     mode: dark ? 'dark' : 'light',
     background: background || (dark ? 'rgb(33, 33, 33)' : 'rgb(255, 255, 255)'),
@@ -249,11 +114,16 @@ function readChatGptTheme() {
 
 function postToFrame(panel, message) {
   const frame = panel?.querySelector('iframe');
-  try { frame?.contentWindow?.postMessage(message, EXTENSION_ORIGIN); } catch {}
+  try {
+    frame?.contentWindow?.postMessage(message, EXTENSION_ORIGIN);
+  } catch {
+    // The frame may be navigating or already gone.
+  }
 }
 
 function applyTheme(panel) {
   if (!panel) return;
+
   const theme = readChatGptTheme();
   panel.style.setProperty('--cg-host-bg', theme.background);
   panel.style.setProperty('--cg-host-fg', theme.foreground);
@@ -264,15 +134,22 @@ function applyTheme(panel) {
 function stopThemeSync() {
   themeObserver?.disconnect();
   themeObserver = null;
+
   if (mediaQuery && mediaListener) {
-    try { mediaQuery.removeEventListener('change', mediaListener); } catch {}
+    try {
+      mediaQuery.removeEventListener('change', mediaListener);
+    } catch {
+      // Older browser implementations may not expose removeEventListener here.
+    }
   }
+
   mediaQuery = null;
   mediaListener = null;
 }
 
 function startThemeSync(panel) {
   stopThemeSync();
+
   let timer = null;
   const schedule = () => {
     clearTimeout(timer);
@@ -280,16 +157,12 @@ function startThemeSync(panel) {
   };
 
   themeObserver = new MutationObserver(schedule);
-  themeObserver.observe(document.documentElement, {
+  const observerOptions = {
     attributes: true,
     attributeFilter: ['class', 'style', 'data-theme']
-  });
-  if (document.body) {
-    themeObserver.observe(document.body, {
-      attributes: true,
-      attributeFilter: ['class', 'style', 'data-theme']
-    });
-  }
+  };
+  themeObserver.observe(document.documentElement, observerOptions);
+  if (document.body) themeObserver.observe(document.body, observerOptions);
 
   try {
     mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -299,6 +172,7 @@ function startThemeSync(panel) {
     mediaQuery = null;
     mediaListener = null;
   }
+
   applyTheme(panel);
 }
 
@@ -309,17 +183,19 @@ function applyLayout(panel, state) {
     state = currentState;
   }
 
-  const occupied = state.collapsed ? RAIL_WIDTH : state.width;
+  const occupiedWidth = state.collapsed ? RAIL_WIDTH : state.width;
   panel.style.setProperty('--cg-dock-panel-width', `${state.width}px`);
+  panel.style.setProperty('--cg-dock-rail-width', `${RAIL_WIDTH}px`);
   panel.classList.toggle('cg-dock-collapsed', state.collapsed);
-  document.documentElement.style.setProperty('--cg-dock-occupied-width', `${occupied}px`);
+  document.documentElement.style.setProperty('--cg-dock-occupied-width', `${occupiedWidth}px`);
   document.body?.classList.add(BODY_CLASS);
 
   const collapseButton = panel.querySelector('[data-action="collapse"]');
   if (collapseButton) {
+    const label = state.collapsed ? 'Expand conversation graph' : 'Collapse conversation graph';
     collapseButton.textContent = state.collapsed ? '‹' : '›';
-    collapseButton.title = state.collapsed ? 'Expand conversation graph' : 'Collapse conversation graph';
-    collapseButton.setAttribute('aria-label', collapseButton.title);
+    collapseButton.title = label;
+    collapseButton.setAttribute('aria-label', label);
   }
 }
 
@@ -329,9 +205,11 @@ function setupResize(panel) {
 
   handle.addEventListener('pointerdown', (event) => {
     if (!currentState || currentState.collapsed || event.button !== 0) return;
+
     event.preventDefault();
     handle.setPointerCapture?.(event.pointerId);
     panel.classList.add('cg-dock-resizing');
+
     const startX = event.clientX;
     const startWidth = currentState.width;
 
@@ -360,8 +238,10 @@ function setupResize(panel) {
 
   viewportResizeListener = () => {
     if (!currentState || currentState.collapsed) return;
+
     const nextWidth = clamp(currentState.width, MIN_WIDTH, getMaxPanelWidth());
     if (nextWidth === currentState.width) return;
+
     currentState = { ...currentState, width: nextWidth };
     applyLayout(panel, currentState);
     saveState(currentState);
@@ -370,9 +250,19 @@ function setupResize(panel) {
 }
 
 function setActiveView(panel, mode) {
+  panel.dataset.viewMode = mode;
   panel.querySelectorAll('[data-view-mode]').forEach((button) => {
     button.classList.toggle('cg-active', button.dataset.viewMode === mode);
   });
+}
+
+function setMiniMapActive(panel, visible) {
+  const button = panel.querySelector('[data-action="minimap"]');
+  if (!button) return;
+  button.classList.toggle('cg-active', visible);
+  button.setAttribute('aria-pressed', String(visible));
+  button.title = visible ? 'Hide minimap' : 'Show minimap';
+  button.setAttribute('aria-label', button.title);
 }
 
 function setupControls(panel) {
@@ -382,6 +272,10 @@ function setupControls(panel) {
       setActiveView(panel, mode);
       postToFrame(panel, { type: 'CG_SET_VIEW_MODE', payload: { mode } });
     });
+  });
+
+  panel.querySelector('[data-action="minimap"]')?.addEventListener('click', () => {
+    postToFrame(panel, { type: 'CG_TOGGLE_MINIMAP' });
   });
 
   panel.querySelector('[data-action="refresh"]')?.addEventListener('click', () => {
@@ -398,27 +292,33 @@ function setupControls(panel) {
   const frame = panel.querySelector('iframe');
   panelMessageListener = (event) => {
     if (event.source !== frame?.contentWindow) return;
-    const data = event?.data;
+
+    const data = event.data;
     if (!data || typeof data !== 'object') return;
+
     if (data.type === 'CG_READY') {
       applyTheme(panel);
       postToFrame(panel, { type: 'CG_REQUEST_VIEW_MODE' });
+      postToFrame(panel, { type: 'CG_REQUEST_MINIMAP_STATE' });
     } else if (data.type === 'CG_VIEW_MODE' && data.payload?.mode) {
       setActiveView(panel, String(data.payload.mode));
+    } else if (data.type === 'CG_MINIMAP_STATE') {
+      setMiniMapActive(panel, data.payload?.visible === true);
     } else if (data.type === 'CG_THEME_REQUEST') {
       applyTheme(panel);
     }
   };
+
   window.addEventListener('message', panelMessageListener);
 }
 
 async function createPanel() {
-  ensureStyles();
   currentState = await loadState();
-
   const initialTheme = readChatGptTheme();
+
   const panel = document.createElement('aside');
   panel.id = PANEL_ID;
+  panel.dataset.viewMode = 'graph';
   panel.style.setProperty('--cg-host-bg', initialTheme.background);
   panel.style.setProperty('--cg-host-fg', initialTheme.foreground);
   panel.style.setProperty('--cg-dock-icon-filter', initialTheme.mode === 'dark' ? 'invert(1)' : 'none');
@@ -427,21 +327,27 @@ async function createPanel() {
     <div class="cg-dock-resizer" aria-hidden="true"></div>
     <div class="cg-dock-header">
       <div class="cg-dock-title">Conversation graph</div>
-      <div class="cg-dock-segment" role="group" aria-label="Graph view">
-        <button class="cg-dock-button" data-view-mode="graph" title="Graph view" aria-label="Graph view">
+      <div class="cg-dock-segment" role="group" aria-label="Conversation graph view">
+        <button class="cg-dock-button cg-active" data-view-mode="graph" title="Graph view" aria-label="Graph view" type="button">
           <img src="${chrome.runtime.getURL('assets/graph.svg')}" alt="">
         </button>
-        <button class="cg-dock-button" data-view-mode="tree" title="Tree view" aria-label="Tree view">
+        <button class="cg-dock-button" data-view-mode="tree" title="Tree view" aria-label="Tree view" type="button">
           <img src="${chrome.runtime.getURL('assets/tree.svg')}" alt="">
         </button>
       </div>
-      <button class="cg-dock-button" data-action="refresh" title="Refresh graph" aria-label="Refresh graph">
+      <button class="cg-dock-button" data-action="minimap" title="Show minimap" aria-label="Show minimap" aria-pressed="false" type="button">
+        <img src="${chrome.runtime.getURL('assets/minimap.svg')}" alt="">
+      </button>
+      <button class="cg-dock-button" data-action="refresh" title="Refresh graph" aria-label="Refresh graph" type="button">
         <img src="${chrome.runtime.getURL('assets/fresh.svg')}" alt="">
       </button>
-      <button class="cg-dock-button cg-dock-collapse" data-action="collapse" aria-label="Collapse conversation graph"></button>
+      <button class="cg-dock-button cg-dock-collapse" data-action="collapse" aria-label="Collapse conversation graph" type="button"></button>
     </div>
     <div class="cg-dock-body">
-      <iframe title="Conversation graph" src="${chrome.runtime.getURL(`src/sidepanel/index.html?embedded=1&dock=1&theme=${initialTheme.mode}`)}"></iframe>
+      <iframe
+        title="Conversation graph"
+        src="${chrome.runtime.getURL(`src/sidepanel/index.html?embedded=1&theme=${initialTheme.mode}`)}"
+      ></iframe>
     </div>
   `;
 
@@ -471,6 +377,7 @@ export async function openDockPanel(options = {}) {
 export function closeDockPanel() {
   const panel = getPanel();
   stopThemeSync();
+
   if (panelMessageListener) {
     window.removeEventListener('message', panelMessageListener);
     panelMessageListener = null;
@@ -479,6 +386,7 @@ export function closeDockPanel() {
     window.removeEventListener('resize', viewportResizeListener);
     viewportResizeListener = null;
   }
+
   panel?.remove();
   document.body?.classList.remove(BODY_CLASS);
   document.documentElement.style.removeProperty('--cg-dock-occupied-width');
@@ -514,6 +422,7 @@ async function syncDockToRoute() {
 function setupDockRuntime() {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== 'CG_TOGGLE_DOCKED_PANEL') return false;
+
     toggleDockPanel()
       .then(opened => sendResponse({ success: true, opened }))
       .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
@@ -522,16 +431,17 @@ function setupDockRuntime() {
 
   window.addEventListener('keydown', (event) => {
     const target = event.target;
-    const tag = (target?.tagName || '').toLowerCase();
-    const typing = tag === 'input' || tag === 'textarea' || target?.isContentEditable;
-    if (typing || !event.altKey || !event.shiftKey || event.code !== 'KeyG') return;
+    const tagName = (target?.tagName || '').toLowerCase();
+    const isTyping = tagName === 'input' || tagName === 'textarea' || target?.isContentEditable;
+    if (isTyping || !event.altKey || !event.shiftKey || event.code !== 'KeyG') return;
+
     event.preventDefault();
     event.stopImmediatePropagation();
-    toggleDockPanel();
+    void toggleDockPanel();
   }, { capture: true });
 
   void syncDockToRoute();
-  routeTimer = setInterval(() => { void syncDockToRoute(); }, 600);
+  setInterval(() => { void syncDockToRoute(); }, 600);
 }
 
 if (!globalThis.__chatgptGraphDockInitialized) {

@@ -1,8 +1,8 @@
 /**
  * Main ChatGPT content script.
  *
- * The backend conversation mapping is the canonical graph. DOM observation is
- * used only to detect changes and to actuate navigation/scrolling in ChatGPT.
+ * The backend conversation mapping and `current_node` are the canonical graph
+ * state. DOM observation is used only as a change signal and as a UI actuator.
  */
 
 import {
@@ -20,10 +20,10 @@ import {
 } from '../shared/utils.js';
 import { loadToken, hasToken, initTokenListener } from './auth/token-manager.js';
 import { fetchConversationWithRetry } from './api/conversation.js';
-import { parseMapping, getNodeStatistics } from './parser/mapping-parser.js';
+import { parseMapping } from './parser/mapping-parser.js';
 import { normalizeAssistantStreamNodes } from './parser/assistant-stream-normalizer.js';
-import { extractBranches, buildRounds, analyzeBranchStructure } from './parser/branch-extractor.js';
-import { isConversationPage, waitForElement } from './utils/dom-helper.js';
+import { resolveCurrentNodeId } from './parser/current-node.js';
+import { waitForElement } from './utils/dom-helper.js';
 import { createURLObserver } from './observers/url-observer.js';
 import { createMessageObserver } from './observers/message-observer.js';
 import { conversationState } from './state/conversation-state.js';
@@ -35,14 +35,16 @@ import {
 } from './utils/message-id-helper.js';
 import { initCollapseManager, setupSettingsListener } from './collapse/collapse-manager.js';
 
-let urlObserver = null;
-let messageObserver = null;
 const CONTENT_SCRIPT_GUARD = '__chatgptGraphContentInitialized__';
-
 const CANONICAL_SYNC_USER_DELAY = 1500;
 const CANONICAL_SYNC_ASSISTANT_DELAY = 250;
 const CANONICAL_SYNC_RETRY_DELAY = 800;
 const CANONICAL_SYNC_MAX_RETRIES = 3;
+
+let urlObserver = null;
+let messageObserver = null;
+let activeConversationId = null;
+let routeGeneration = 0;
 let canonicalSyncTimer = null;
 let canonicalSyncInFlight = false;
 let canonicalSyncQueued = false;
@@ -62,10 +64,21 @@ async function loadAssistantStreamSettings() {
   }
 }
 
-function setupAssistantStreamSettingsListener() {
+function setupStorageListeners() {
   chrome.storage?.onChanged?.addListener((changes, areaName) => {
-    if (areaName === 'local' && changes[STORAGE_KEYS.ASSISTANT_STREAM_SETTINGS]) {
-      void loadAssistantStreamSettings();
+    if (areaName !== 'local') return;
+
+    if (changes[STORAGE_KEYS.ASSISTANT_STREAM_SETTINGS]) {
+      void loadAssistantStreamSettings().then(() => {
+        const conversationId = extractConversationId();
+        if (conversationId) return fetchAndProcessConversation(conversationId);
+        return null;
+      });
+    }
+
+    if (changes.accessToken?.newValue && !conversationState.isReady()) {
+      const conversationId = extractConversationId();
+      if (conversationId) void activateConversation(conversationId, { initialDelay: 0 });
     }
   });
 }
@@ -73,7 +86,7 @@ function setupAssistantStreamSettingsListener() {
 function setupMessageListener() {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === MESSAGE_TYPES.SCROLL_TO_MESSAGE) {
-      const { messageId } = message.payload || {};
+      const messageId = message.payload?.messageId;
       if (!messageId) {
         sendResponse({ success: false, error: 'No messageId provided' });
         return true;
@@ -81,44 +94,23 @@ function setupMessageListener() {
 
       scrollToMessage(messageId)
         .then(success => sendResponse({ success }))
-        .catch(error => {
-          log('error', 'Content', 'scrollToMessage error:', error);
-          sendResponse({ success: false, error: error.message });
-        });
+        .catch(error => sendResponse({ success: false, error: error.message }));
       return true;
     }
 
     if (message.type === MESSAGE_TYPES.REFRESH_DATA) {
-      (async () => {
-        try {
-          const conversationId = message.payload?.conversationId || extractConversationId();
-          if (!conversationId) {
-            sendResponse({ success: false, error: 'No conversationId' });
-            return;
-          }
-
-          const tokenLoaded = await loadToken();
-          if (!tokenLoaded || !hasToken()) {
-            sendResponse({ success: false, error: 'No valid token configured' });
-            return;
-          }
-
-          await fetchAndProcessConversation(conversationId);
-          sendResponse({ success: true });
-        } catch (error) {
-          log('error', 'Content', 'Manual refresh failed:', error);
-          sendResponse({ success: false, error: error.message || 'Refresh failed' });
-        }
-      })();
+      refreshConversation(message.payload?.conversationId)
+        .then(success => sendResponse({ success }))
+        .catch(error => sendResponse({ success: false, error: error.message || 'Refresh failed' }));
       return true;
     }
 
     if (message.type === MESSAGE_TYPES.ASSISTANT_STREAM_SETTINGS_CHANGED) {
-      (async () => {
-        await loadAssistantStreamSettings();
-        const conversationId = extractConversationId();
-        if (conversationId) await fetchAndProcessConversation(conversationId);
-      })()
+      loadAssistantStreamSettings()
+        .then(() => {
+          const conversationId = extractConversationId();
+          return conversationId ? fetchAndProcessConversation(conversationId) : null;
+        })
         .then(() => sendResponse({ success: true }))
         .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
       return true;
@@ -128,12 +120,21 @@ function setupMessageListener() {
   });
 }
 
+async function refreshConversation(requestedConversationId) {
+  const conversationId = requestedConversationId || extractConversationId();
+  if (!conversationId) throw new Error('No conversationId');
+
+  const tokenLoaded = await loadToken();
+  if (!tokenLoaded || !hasToken()) throw new Error('No valid token configured');
+
+  return Boolean(await fetchAndProcessConversation(conversationId));
+}
+
 async function scrollToMessage(messageId) {
   let targetElement = findMessageElement(messageId);
   if (targetElement) return scrollUntilVisible(targetElement);
 
   if (!conversationState.isReady()) return false;
-
   const nodes = conversationState.getNodes();
   if (!nodes?.length) return false;
 
@@ -144,6 +145,7 @@ async function scrollToMessage(messageId) {
       return false;
     }
 
+    scheduleCanonicalSync(150);
     await delay(300);
     targetElement = findMessageElement(messageId);
     return targetElement ? scrollUntilVisible(targetElement) : false;
@@ -213,7 +215,7 @@ function waitForDOMChangeOrTimeout(container, maxWait) {
       resolve();
     }
 
-    observer.observe(container, { childList: true, subtree: true, attributes: false });
+    observer.observe(container, { childList: true, subtree: true });
     setTimeout(cleanup, maxWait);
   });
 }
@@ -230,7 +232,7 @@ async function scrollUntilVisible(element) {
   let domWaitTime = DOM_WAIT_INITIAL;
   let stuckCount = 0;
 
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     if (isElementNearViewportCenter(element)) {
       highlightElement(element);
       return true;
@@ -303,33 +305,31 @@ function findMessageElement(messageId) {
 }
 
 function highlightElement(element) {
-  element.style.transition = 'outline 0.3s ease, outline-offset 0.3s ease';
-  element.style.outline = '3px solid #3b82f6';
+  const previousOutline = element.style.outline;
+  const previousOffset = element.style.outlineOffset;
+  const previousTransition = element.style.transition;
+
+  element.style.transition = 'outline-color 160ms ease';
+  element.style.outline = '2px solid color-mix(in srgb, currentColor 38%, transparent)';
   element.style.outlineOffset = '2px';
 
   setTimeout(() => {
-    element.style.outline = '3px solid transparent';
-    setTimeout(() => {
-      element.style.removeProperty('outline');
-      element.style.removeProperty('outline-offset');
-      element.style.removeProperty('transition');
-    }, 300);
-  }, 1500);
+    element.style.outline = previousOutline;
+    element.style.outlineOffset = previousOffset;
+    element.style.transition = previousTransition;
+  }, 900);
 }
 
 async function main() {
   await initDebugLogSetting();
-
-  if (!chrome.runtime?.id) {
-    console.warn('[ChatGPT Graph] Extension context invalidated. Refresh this page.');
-    return;
-  }
+  if (!chrome.runtime?.id) return;
 
   initTokenListener();
   await loadAssistantStreamSettings();
-  setupAssistantStreamSettingsListener();
+  setupStorageListeners();
   setupMessageListener();
   setupSettingsListener();
+  startURLObserver();
 
   try {
     await initCollapseManager();
@@ -337,23 +337,69 @@ async function main() {
     log('warn', 'Content', 'Failed to initialize collapse manager:', error);
   }
 
-  if (!isConversationPage()) return;
-
   const conversationId = extractConversationId();
-  if (!conversationId) return;
+  if (conversationId) await activateConversation(conversationId);
+}
 
-  await waitForPageReady();
+function startURLObserver() {
+  urlObserver?.stop();
+  urlObserver = createURLObserver((newConversationId, oldConversationId) => {
+    return handleRouteChange(newConversationId, oldConversationId);
+  });
+}
 
-  const tokenLoaded = await loadToken();
-  if (!tokenLoaded || !hasToken()) {
-    console.warn('[ChatGPT Graph] Authentication token unavailable. Use ChatGPT normally or open the extension settings.');
+async function handleRouteChange(newConversationId, oldConversationId) {
+  log('info', 'Content', 'Route changed', {
+    from: oldConversationId || '(none)',
+    to: newConversationId || '(none)'
+  });
+
+  if (!newConversationId) {
+    deactivateConversation();
     return;
   }
 
-  await delay(CONFIG.API_DELAY);
-  await fetchAndProcessConversation(conversationId);
-  startURLObserver();
+  await activateConversation(newConversationId);
+}
+
+function deactivateConversation() {
+  routeGeneration += 1;
+  activeConversationId = null;
+  resetCanonicalSyncState();
+  messageObserver?.stop();
+  messageObserver = null;
+  conversationState.clear();
+}
+
+async function activateConversation(conversationId, options = {}) {
+  if (!conversationId) return false;
+  if (activeConversationId === conversationId && conversationState.isReady()) return true;
+
+  const generation = ++routeGeneration;
+  activeConversationId = conversationId;
+  resetCanonicalSyncState();
+  messageObserver?.stop();
+  messageObserver = null;
+  conversationState.clear();
+
+  await waitForPageReady();
+  if (generation !== routeGeneration || extractConversationId() !== conversationId) return false;
+
+  const tokenLoaded = await loadToken();
+  if (!tokenLoaded || !hasToken()) {
+    log('warn', 'Content', 'Authentication token unavailable; waiting for token capture');
+    return false;
+  }
+
+  const initialDelay = options.initialDelay ?? CONFIG.API_DELAY;
+  if (initialDelay > 0) await delay(initialDelay);
+  if (generation !== routeGeneration || extractConversationId() !== conversationId) return false;
+
+  const result = await fetchAndProcessConversation(conversationId);
+  if (!result || generation !== routeGeneration) return false;
+
   startMessageObserver();
+  return true;
 }
 
 function resetCanonicalSyncState() {
@@ -370,9 +416,7 @@ function scheduleCanonicalSync(delayMs = CANONICAL_SYNC_ASSISTANT_DELAY) {
   if (canonicalSyncTimer) clearTimeout(canonicalSyncTimer);
   canonicalSyncTimer = setTimeout(() => {
     canonicalSyncTimer = null;
-    runCanonicalSync().catch(error => {
-      log('error', 'Content', 'Canonical conversation sync failed:', error);
-    });
+    void runCanonicalSync();
   }, delayMs);
 }
 
@@ -387,19 +431,17 @@ async function runCanonicalSync() {
 
   canonicalSyncInFlight = true;
   try {
-    const conversationData = await fetchAndProcessConversation(conversationId);
-    if (!conversationData) {
-      if (extractConversationId() !== conversationId) return;
-      if (canonicalSyncRetryCount < CANONICAL_SYNC_MAX_RETRIES) {
+    const result = await fetchAndProcessConversation(conversationId);
+    if (!result) {
+      if (extractConversationId() === conversationId && canonicalSyncRetryCount < CANONICAL_SYNC_MAX_RETRIES) {
         canonicalSyncRetryCount += 1;
         scheduleCanonicalSync(CANONICAL_SYNC_RETRY_DELAY * canonicalSyncRetryCount);
       }
       return;
     }
 
-    const mapping = conversationData.mapping || {};
     for (const messageId of Array.from(pendingObservedMessageIds)) {
-      if (mapping[messageId]) pendingObservedMessageIds.delete(messageId);
+      if (result.mapping[messageId]) pendingObservedMessageIds.delete(messageId);
     }
 
     if (pendingObservedMessageIds.size > 0 && canonicalSyncRetryCount < CANONICAL_SYNC_MAX_RETRIES) {
@@ -409,6 +451,8 @@ async function runCanonicalSync() {
       pendingObservedMessageIds.clear();
       canonicalSyncRetryCount = 0;
     }
+  } catch (error) {
+    log('error', 'Content', 'Canonical conversation sync failed:', error);
   } finally {
     canonicalSyncInFlight = false;
     if (canonicalSyncQueued) {
@@ -418,32 +462,24 @@ async function runCanonicalSync() {
   }
 }
 
-function startURLObserver() {
-  urlObserver?.stop();
-
-  urlObserver = createURLObserver(async (newConversationId, oldConversationId) => {
-    log('info', 'Content', `Conversation switched: ${oldConversationId} -> ${newConversationId}`);
-    resetCanonicalSyncState();
-    conversationState.clear();
-    messageObserver?.reset();
-    await delay(CONFIG.API_DELAY);
-    await fetchAndProcessConversation(newConversationId);
-  });
-}
-
 function startMessageObserver() {
   messageObserver?.stop();
-  messageObserver = createMessageObserver(handleIncrementalMessage);
+  messageObserver = createMessageObserver(handleMessageSignal);
 }
 
-function handleIncrementalMessage(messageData) {
+function handleMessageSignal(signal) {
   if (!conversationState.isReady()) return;
 
-  if (messageData?.id) pendingObservedMessageIds.add(messageData.id);
-  logCanonicalSyncObservation(messageData);
+  if (signal?.id) pendingObservedMessageIds.add(signal.id);
+  if (getDebugLogEnabled()) {
+    console.log('[ChatGPT Graph] Canonical sync scheduled', {
+      id: signal?.id?.substring(0, 16),
+      role: signal?.role
+    });
+  }
 
   scheduleCanonicalSync(
-    messageData?.role === 'user'
+    signal?.role === 'user'
       ? CANONICAL_SYNC_USER_DELAY
       : CANONICAL_SYNC_ASSISTANT_DELAY
   );
@@ -458,7 +494,6 @@ async function fetchAndProcessConversation(conversationId) {
   try {
     const data = await fetchConversationWithRetry(conversationId);
     if (!data?.mapping) throw new Error('Invalid conversation data');
-
     if (extractConversationId() !== conversationId) return null;
 
     const parsed = parseMapping(data.mapping, conversationId);
@@ -468,40 +503,30 @@ async function fetchAndProcessConversation(conversationId) {
     });
     const nodes = normalized.nodes;
     const edges = parsed.nodes.length > 0 ? normalized.edges : parsed.edges;
-    const branches = extractBranches(nodes);
-    const rounds = buildRounds(nodes);
-    const analysis = analyzeBranchStructure(nodes);
-
-    log('info', 'Content', 'Conversation parsed', {
-      ...getNodeStatistics(nodes),
-      edges: edges.length,
-      branches: branches.length,
-      rounds: rounds.length
-    });
+    const currentNodeId = resolveCurrentNodeId(data.current_node, nodes, data.mapping);
 
     const conversationData = {
       id: conversationId,
       title: data.title,
       createTime: data.create_time,
       updateTime: data.update_time,
-      mapping: data.mapping,
+      currentNodeId,
       nodes,
-      edges,
-      rounds,
-      branches,
-      analysis
+      edges
     };
 
     conversationState.initialize(conversationData);
+    await sendToBackground(MESSAGE_TYPES.CONVERSATION_LOADED, conversationData);
 
-    try {
-      await sendToBackground(MESSAGE_TYPES.CONVERSATION_LOADED, conversationData);
-    } catch (error) {
-      log('error', 'Content', 'Failed to send conversation to background:', error.message);
+    if (getDebugLogEnabled()) {
+      console.log('[ChatGPT Graph] Canonical snapshot', {
+        nodes: nodes.length,
+        edges: edges.length,
+        currentNodeId
+      });
     }
 
-    logDebugInfo(conversationData);
-    return conversationData;
+    return { ...conversationData, mapping: data.mapping };
   } catch (error) {
     log('error', 'Content', 'Failed to process conversation:', error);
     try {
@@ -519,7 +544,7 @@ async function sendToBackground(type, payload, retries = 3) {
     throw new Error('Extension context invalidated. Please refresh the page.');
   }
 
-  for (let attempt = 1; attempt <= retries; attempt++) {
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
       return await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({ type, payload, timestamp: Date.now() }, (response) => {
@@ -539,30 +564,6 @@ async function sendToBackground(type, payload, retries = 3) {
   }
 
   return null;
-}
-
-function logDebugInfo(conversationData) {
-  if (!getDebugLogEnabled()) return;
-
-  console.group('ChatGPT Graph - Conversation Data');
-  console.log('Statistics:', {
-    'Total Nodes': conversationData.nodes.length,
-    'Total Edges': conversationData.edges.length,
-    'User Messages': conversationData.nodes.filter(node => node.role === 'user').length,
-    'Assistant Replies': conversationData.nodes.filter(node => node.role === 'assistant').length,
-    Rounds: conversationData.rounds.length,
-    Branches: conversationData.branches.length,
-    'Branch Points': conversationData.analysis.branchPointsCount
-  });
-  console.groupEnd();
-}
-
-function logCanonicalSyncObservation(messageData) {
-  if (!getDebugLogEnabled()) return;
-  console.log('[ChatGPT Graph] Canonical sync scheduled', {
-    id: messageData?.id?.substring(0, 16),
-    role: messageData?.role
-  });
 }
 
 if (globalThis[CONTENT_SCRIPT_GUARD]) {

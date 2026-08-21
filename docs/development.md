@@ -1,10 +1,8 @@
 # Development Guide
 
-This guide covers the current development workflow for ChatGPT Graph Navigator.
-
 ## Requirements
 
-- Node.js 18 or newer
+- Node.js 18+
 - npm
 - Chrome or another Chromium-based browser
 - A ChatGPT account
@@ -17,206 +15,152 @@ cd chatgpt-graph-navigator
 npm ci
 ```
 
-Start a watch build while developing:
+Useful commands:
 
 ```bash
-npm run dev
+npm run dev       # watch build
+npm run build     # development build
+npm run release   # production build + release/ + ZIP
 ```
 
-Create a normal build:
+Load either the project root after `npm run build` or `release/` after `npm run release` from `chrome://extensions` with Developer mode enabled. Reload the extension and refresh existing ChatGPT tabs after rebuilding. The edited-message compatibility adapter runs at `document_start`, so a page refresh is required for changes to that bundle.
 
-```bash
-npm run build
-```
+## Architecture constraints
 
-Create a production package:
+Read [architecture.md](architecture.md) before changing topology or navigation behavior.
 
-```bash
-npm run release
-```
+### `mapping` defines topology
 
-The release command writes a loadable extension to `release/` and also creates a ZIP archive at the repository root.
+Never derive canonical parent/child edges from DOM adjacency. ChatGPT virtualizes turns and changes wrapper markup frequently. DOM observations may trigger a canonical refetch, but graph ancestry must come from the backend conversation `mapping`.
 
-## Loading the extension
+### `current_node` defines the active branch
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Choose **Load unpacked**.
-4. Select either the project root after `npm run build`, or the `release/` directory after `npm run release`.
-5. After rebuilding, press **Reload** on the extension card and refresh existing ChatGPT tabs.
+The backend `current_node` is the canonical selected leaf. If parser or assistant-stream normalization removes that raw node, resolve it to the corresponding normalized graph node instead of guessing the active path from mounted DOM turns.
 
-The edited-message compatibility layer runs at `document_start`, so a page refresh is required whenever that bundle changes.
+### DOM coupling belongs in adapters
 
-## Debugging
+DOM-dependent code should be limited to:
 
-### Content script
-
-Open DevTools on a ChatGPT conversation page. Content-script logs use the `ChatGPT Graph` logger and are easiest to inspect in the page console.
-
-Debug logging can be enabled from the extension settings popup.
-
-### Service worker
-
-Open:
-
-```text
-chrome://extensions
-```
-
-Find ChatGPT Graph Navigator and open the **Service worker** inspector.
-
-### Embedded graph UI
-
-The right-hand graph panel is an extension iframe embedded in ChatGPT. In Chrome DevTools, use the execution-context selector to switch to the extension frame when inspecting React-side logs or DOM state.
-
-## Important architecture constraints
-
-Before changing topology or navigation code, read [architecture.md](architecture.md). The following rules are intentional and should be preserved.
-
-### Do not infer canonical ancestry from DOM adjacency
-
-ChatGPT virtualizes long conversations and changes its turn wrappers frequently. The canonical graph must come from the backend conversation `mapping`.
-
-DOM observers may signal that data changed, but they should trigger a canonical refresh rather than creating parent/child edges themselves.
-
-### Keep ChatGPT UI coupling small
-
-DOM-dependent behavior belongs in narrow adapters, primarily:
-
-- edited-message branch controls;
-- virtualized-turn mounting;
+- detecting turn/message-ID changes;
+- discovering native edited-message controls;
+- mounting virtualized turns;
 - scrolling and focus behavior.
 
-Graph construction, persistence, and branch-path computation should not depend on CSS utility classes or a particular ChatGPT wrapper hierarchy.
+Graph construction, persistence, and selected-path computation should remain independent of CSS utility classes and sibling order.
 
-### Preserve stable graph layout
+### Preserve graph geometry
 
-Revealing a collapsed single assistant response must not cause unrelated graph nodes to move. The base Dagre layout is intentionally computed without those inline response nodes; they are inserted afterward into reserved vertical space.
-
-If you change this behavior, update `scripts/test-qa-tree-layout.mjs`.
+Revealing a collapsed single assistant response must not move existing graph nodes. Dagre lays out the base graph first; compact answer nodes are inserted afterward into reserved inter-rank space. Full-message details likewise render as an overlay instead of changing the fixed graph-card dimensions. Update `scripts/test-qa-tree-layout.mjs` if layout behavior changes.
 
 ## Source layout
 
 ```text
 src/
 ├── background/
-│   ├── auth/                 # Bearer-token capture
-│   ├── database/             # IndexedDB persistence
-│   ├── messaging/            # Runtime message routing
-│   └── index.js              # MV3 service-worker entry point
+│   ├── auth/                 # ChatGPT bearer-token capture
+│   ├── database/             # conversations/nodes/edges IndexedDB stores
+│   ├── messaging/            # runtime routing
+│   └── index.js              # MV3 service worker
 │
 ├── content/
 │   ├── api/                  # ChatGPT conversation API
-│   ├── compat/               # document_start frontend compatibility patch
-│   ├── observers/            # DOM/route change signals
-│   ├── parser/               # Mapping normalization
-│   ├── state/                # In-page canonical conversation state
-│   ├── ui/                   # Dock host and ChatGPT-page UI
-│   ├── utils/                # Branch navigation and DOM helpers
-│   └── index.js              # Main content-script entry point
+│   ├── compat/               # document_start frontend adapter
+│   ├── observers/            # message-ID and SPA route signals
+│   ├── parser/               # mapping, stream, and current-node normalization
+│   ├── state/                # minimal in-page canonical state
+│   ├── ui/                   # automatic right-dock host
+│   ├── utils/                # branch navigation and DOM helpers
+│   └── index.js              # content integration
 │
-├── popup/                    # Settings popup
-├── setup/                    # Manual token setup page
-├── shared/                   # Shared constants and helpers
-└── sidepanel/
-    ├── components/           # Graph/timeline React components
-    ├── hooks/                # UI data hooks
-    ├── styles/               # Base sidepanel styles
-    ├── utils/                # QA tree and layout utilities
-    └── index.jsx             # React entry point
-```
-
-## Code style
-
-Keep changes focused and avoid adding abstractions that are only used once. Prefer small, explicit adapters around unstable ChatGPT behavior.
-
-Use descriptive camelCase for functions and variables, PascalCase for React components/classes, and uppercase snake case for true constants.
-
-Comments should explain **why** a non-obvious constraint exists rather than narrating straightforward code.
-
-Example:
-
-```js
-// ChatGPT virtualizes old turns, so a missing DOM node does not imply that the
-// message belongs to another branch. Check the canonical path first.
-if (currentPath.includes(messageId)) {
-  await mountMessage(messageId);
-}
+├── popup/                    # settings popup
+├── setup/                    # optional manual token setup
+├── shared/                   # cross-context constants/helpers
+└── sidepanel/                # embedded React graph/tree UI
 ```
 
 ## Regression checks
 
-Run the same checks used by CI:
+Run the same checks as CI:
 
 ```bash
 node scripts/check-no-chinese.mjs
 node scripts/test-edit-pagination-compat.mjs
+node scripts/test-current-node.mjs
+node scripts/test-qa-tree-model.mjs
+node scripts/test-assistant-stream-normalizer.mjs
 node scripts/test-qa-tree-layout.mjs
 npm run release
 ```
 
-### English-only source policy
+The checks cover:
 
-The repository intentionally ships and maintains English only. `check-no-chinese.mjs` scans source files, documentation, HTML, CSS, JSON, and workflow files and fails when Han characters are introduced.
+- the English-only repository policy;
+- ChatGPT experiment normalization for in-place edited-message pagination;
+- canonical `current_node` resolution and selected-path construction;
+- normalized QA-tree structure and deterministic ordering;
+- assistant-stream grouping, rewiring, and deterministic edges;
+- graph-coordinate stability when revealing a single assistant response.
 
-### Compatibility-layer test
+## Debugging
 
-`test-edit-pagination-compat.mjs` verifies the known ChatGPT experiment configurations that hide edited-message pagination and ensures the compatibility layer normalizes them to the in-place branch UI.
+### Content integration
 
-### Graph-layout test
+Open DevTools on a ChatGPT page. Enable debug logging from the extension popup when additional canonical-sync and navigation logs are needed.
 
-`test-qa-tree-layout.mjs` verifies that expanding a single assistant response leaves existing node coordinates unchanged.
+### Service worker
 
-## Common development problems
+Open `chrome://extensions`, find ChatGPT Graph Navigator, and inspect its service worker.
 
-### The graph is correct only after pressing Refresh
+### Embedded React UI
 
-Treat this as a canonical synchronization problem. Do not patch DOM parent inference. Inspect whether the content script received a change signal and whether the backend mapping refresh completed.
+The right dock contains an extension iframe. Select that execution context in DevTools to inspect React-side state and DOM.
 
-### A graph node cannot switch ChatGPT branches
+## Common problems
 
-Separate the problem into two layers:
+### The graph becomes correct only after Refresh
 
-1. Does the canonical graph contain the correct target path?
-2. Can the branch actuator find and operate ChatGPT's native edited-message controls?
+Treat this as a canonical synchronization problem. Verify that the message observer emitted a change signal and that the backend conversation refetch completed. Do not repair it with DOM parent inference.
 
-If the first is correct, avoid changing graph topology code while debugging the second.
+### Native `1/N` switching does not update the highlighted graph path
 
-### Old messages cannot be found in the DOM
+Check whether the mounted turn's message ID changed and whether the next backend snapshot returned the expected `current_node`. The graph should follow that value after normalization.
 
-This is expected in long conversations because ChatGPT virtualizes turns. Use the graph depth and scrolling/mounting helpers rather than assuming every active-path message is mounted at once.
+### A graph node cannot switch branches
 
-### The right dock looks stale after a UI change
+Separate topology from actuation:
 
-Reload the extension and refresh the ChatGPT tab. The dock host CSS is injected by the content script, while the graph UI CSS is loaded inside an extension iframe; both contexts need the updated extension resources.
+1. verify that nodes/edges contain the correct target path;
+2. verify that `branch-navigator.js` can mount the divergence turn and operate ChatGPT's native version controls.
 
-### IndexedDB says a conversation is missing
+Do not modify graph topology to compensate for an actuator failure.
 
-A panel can initialize before the content script has persisted the first canonical snapshot. This is an expected cache miss. The UI should request a content refresh instead of treating it as a fatal error.
+### An old message is absent from the DOM
+
+This is normal in long conversations. ChatGPT virtualizes turns. Use the mounting/scrolling helpers instead of assuming every active-path node is present simultaneously.
+
+### IndexedDB has no conversation yet
+
+This can happen when the embedded panel initializes before the content script persists its first canonical snapshot. It is a normal cache miss; the panel should request a content refresh.
 
 ## Release workflow
 
-The GitHub Actions workflow builds an installable artifact on every branch push. The production process is:
+GitHub Actions builds a ready-to-load artifact on every branch push:
 
 1. `npm ci`
-2. English-only source/documentation check
-3. compatibility regression test
-4. graph-layout regression test
-5. `npm run release`
-6. verify required files in `release/`
-7. upload `release/` as a GitHub Actions artifact
+2. English-only check
+3. pagination compatibility test
+4. canonical current-node test
+5. QA-tree model test
+6. assistant-stream normalization test
+7. stable layout test
+8. `npm run release`
+9. package verification
+10. artifact upload
 
-For manual releases, run:
+## References
 
-```bash
-npm run release
-```
-
-## Useful references
-
-- [Chrome Extensions documentation](https://developer.chrome.com/docs/extensions/)
+- [Chrome Extensions](https://developer.chrome.com/docs/extensions/)
 - [Manifest V3](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
-- [Chrome runtime API](https://developer.chrome.com/docs/extensions/reference/api/runtime)
-- [IndexedDB on MDN](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API)
+- [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API)
 - [React Flow](https://reactflow.dev/)
 - [Dagre](https://github.com/dagrejs/dagre)

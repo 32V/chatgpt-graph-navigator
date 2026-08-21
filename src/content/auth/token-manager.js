@@ -1,57 +1,36 @@
 /**
- * Content-side authentication state.
- * Supports automatically captured and manually configured bearer tokens.
+ * Content-side authentication state for canonical ChatGPT API requests.
  */
 
 import { log } from '../../shared/utils.js';
 
-let capturedToken = null;
-let cachedAuthInfo = null;
-let tokenSource = null;
+const TOKEN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+let accessToken = null;
 
 function getCookie(name) {
-  const cookies = document.cookie.split(';');
-  for (const cookie of cookies) {
-    const [cookieName, cookieValue] = cookie.trim().split('=');
-    if (cookieName === name) return decodeURIComponent(cookieValue);
+  for (const rawCookie of document.cookie.split(';')) {
+    const cookie = rawCookie.trim();
+    const separator = cookie.indexOf('=');
+    if (separator < 0 || cookie.slice(0, separator) !== name) continue;
+    return decodeURIComponent(cookie.slice(separator + 1));
   }
   return null;
 }
 
 export async function loadToken() {
   try {
-    const result = await chrome.storage.local.get([
-      'accessToken',
-      'tokenTimestamp',
-      'tokenSource'
-    ]);
-
-    if (!result.accessToken) {
-      log('warn', 'Token', 'No token found in storage, waiting for auto-capture');
-      return false;
-    }
-
+    const result = await chrome.storage.local.get(['accessToken', 'tokenTimestamp']);
     const age = Date.now() - (result.tokenTimestamp || 0);
-    const maxAge = 24 * 60 * 60 * 1000;
 
-    if (age >= maxAge) {
-      log('warn', 'Token', 'Stored token expired (>24h), waiting for auto-capture');
-      capturedToken = null;
-      tokenSource = null;
+    if (!result.accessToken || age >= TOKEN_MAX_AGE_MS) {
+      accessToken = null;
       return false;
     }
 
-    capturedToken = result.accessToken;
-    tokenSource = result.tokenSource || 'unknown';
-    cachedAuthInfo = null;
-
-    log('info', 'Token', 'Loaded token from storage', {
-      source: tokenSource,
-      length: capturedToken.length,
-      age: `${Math.floor(age / 60000)} minutes`
-    });
+    accessToken = result.accessToken;
     return true;
   } catch (error) {
+    accessToken = null;
     log('error', 'Token', 'Failed to load token:', error);
     return false;
   }
@@ -60,129 +39,21 @@ export async function loadToken() {
 export function initTokenListener() {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes.accessToken) return;
-
-    const newToken = changes.accessToken.newValue;
-    const newSource = changes.tokenSource?.newValue || 'auto';
-
-    if (newToken && newToken !== capturedToken) {
-      capturedToken = newToken;
-      tokenSource = newSource;
-      cachedAuthInfo = null;
-      log('info', 'Token', 'Token updated from storage', {
-        source: tokenSource,
-        length: capturedToken.length
-      });
-      return;
-    }
-
-    if (!newToken) {
-      capturedToken = null;
-      tokenSource = null;
-      cachedAuthInfo = null;
-      log('info', 'Token', 'Token cleared from storage');
-    }
+    accessToken = changes.accessToken.newValue || null;
   });
-
-  log('info', 'Token', 'Token listener initialized');
-}
-
-export function getToken() {
-  return capturedToken;
 }
 
 export function hasToken() {
-  return Boolean(capturedToken);
-}
-
-export function getTokenSource() {
-  return tokenSource;
-}
-
-function getAuthInfo() {
-  if (cachedAuthInfo && Date.now() - cachedAuthInfo.timestamp < 60000) {
-    return cachedAuthInfo.data;
-  }
-
-  const authInfo = {
-    accessToken: capturedToken,
-    accountId: getCookie('_account'),
-    deviceId: getCookie('oai-did')
-  };
-
-  cachedAuthInfo = {
-    data: authInfo,
-    timestamp: Date.now()
-  };
-
-  log('info', 'API', 'Auth info retrieved:', {
-    hasToken: Boolean(authInfo.accessToken),
-    hasAccountId: Boolean(authInfo.accountId),
-    hasDeviceId: Boolean(authInfo.deviceId),
-    tokenSource: tokenSource || 'none'
-  });
-
-  return authInfo;
-}
-
-export function clearAuthCache() {
-  cachedAuthInfo = null;
-  log('info', 'API', 'Auth cache cleared');
+  return Boolean(accessToken);
 }
 
 export function buildAuthHeaders() {
-  const authInfo = getAuthInfo();
-  const headers = {
-    accept: '*/*'
-  };
+  const headers = { accept: '*/*' };
+  if (accessToken) headers.authorization = `Bearer ${accessToken}`;
 
-  if (authInfo.accessToken) {
-    headers.authorization = `Bearer ${authInfo.accessToken}`;
-  } else {
-    log('warn', 'API', 'No access token available; request may fail');
-  }
-
-  if (authInfo.accountId) headers['chatgpt-account-id'] = authInfo.accountId;
-  if (authInfo.deviceId) headers['oai-device-id'] = authInfo.deviceId;
+  const accountId = getCookie('_account');
+  const deviceId = getCookie('oai-did');
+  if (accountId) headers['chatgpt-account-id'] = accountId;
+  if (deviceId) headers['oai-device-id'] = deviceId;
   return headers;
-}
-
-export async function getTokenStatus() {
-  try {
-    const result = await chrome.storage.local.get([
-      'accessToken',
-      'tokenTimestamp',
-      'tokenSource',
-      'tokenInfo'
-    ]);
-
-    if (!result.accessToken) {
-      return {
-        hasToken: false,
-        source: null,
-        isExpired: true,
-        message: 'No token found'
-      };
-    }
-
-    const age = Date.now() - (result.tokenTimestamp || 0);
-    const isExpired = age >= 24 * 60 * 60 * 1000;
-
-    return {
-      hasToken: true,
-      source: result.tokenSource || 'unknown',
-      age,
-      ageMinutes: Math.floor(age / 60000),
-      isExpired,
-      tokenLength: result.accessToken.length,
-      message: isExpired ? 'Token expired' : 'Token valid'
-    };
-  } catch (error) {
-    log('error', 'Token', 'Error getting token status:', error);
-    return {
-      hasToken: false,
-      source: null,
-      isExpired: true,
-      error: error.message
-    };
-  }
 }

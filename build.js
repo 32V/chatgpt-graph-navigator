@@ -1,31 +1,8 @@
 import esbuild from 'esbuild';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const isWatch = process.argv.includes('--watch');
 const isRelease = process.argv.includes('--release');
 const isDev = isWatch && !isRelease;
-
-const stripDebugLogsPlugin = {
-  name: 'strip-debug-logs',
-  setup(build) {
-    if (!isRelease) return;
-
-    build.onLoad({ filter: /\.jsx?$/ }, async (args) => {
-      const fs = await import('fs');
-      let contents = await fs.promises.readFile(args.path, 'utf8');
-      contents = contents.replace(/console\.(log|debug|info)\s*\([^;]*\);?/g, '');
-
-      return {
-        contents,
-        loader: args.path.endsWith('.jsx') ? 'jsx' : 'js'
-      };
-    });
-  }
-};
 
 const commonOptions = {
   bundle: true,
@@ -34,9 +11,9 @@ const commonOptions = {
   target: ['chrome115'],
   sourcemap: isDev ? 'inline' : false,
   minify: isRelease,
-  plugins: [stripDebugLogsPlugin],
+  pure: isRelease ? ['console.log', 'console.debug', 'console.info'] : [],
   define: {
-    'process.env.NODE_ENV': isDev ? '"development"' : '"production"',
+    'process.env.NODE_ENV': isDev ? '"development"' : '"production"'
   },
   logLevel: 'info'
 };
@@ -47,7 +24,7 @@ const reactOptions = {
     '.js': 'jsx',
     '.jsx': 'jsx'
   },
-  jsx: 'automatic',
+  jsx: 'automatic'
 };
 
 const builds = [
@@ -63,8 +40,8 @@ const builds = [
   },
   {
     ...commonOptions,
-    entryPoints: ['src/content/ui/docked-panel-theme.css'],
-    outfile: 'dist/docked-panel-theme.css'
+    entryPoints: ['src/content/ui/docked-panel.css'],
+    outfile: 'dist/docked-panel.css'
   },
   {
     ...commonOptions,
@@ -95,16 +72,6 @@ const builds = [
     ...commonOptions,
     entryPoints: ['src/sidepanel/styles/index.css'],
     outfile: 'dist/sidepanel.css'
-  },
-  {
-    ...commonOptions,
-    entryPoints: ['src/sidepanel/chatgpt-theme.css'],
-    outfile: 'dist/chatgpt-theme.css'
-  },
-  {
-    ...commonOptions,
-    entryPoints: ['src/sidepanel/graph-ux.css'],
-    outfile: 'dist/graph-ux.css'
   }
 ];
 
@@ -113,16 +80,16 @@ async function build() {
     if (isWatch) {
       console.log('Watching for changes...');
       const contexts = await Promise.all(builds.map(options => esbuild.context(options)));
-      await Promise.all(contexts.map(ctx => ctx.watch()));
-    } else {
-      await Promise.all(builds.map(options => esbuild.build(options)));
-      if (isRelease) console.log('√ Release build completed! (debug logs removed, minified)');
-      else console.log('√ Build completed!');
+      await Promise.all(contexts.map(context => context.watch()));
+      return;
     }
+
+    await Promise.all(builds.map(options => esbuild.build(options)));
+    console.log(isRelease ? 'Release build completed.' : 'Build completed.');
   } catch (error) {
-    console.error('× Build failed:', error);
+    console.error('Build failed:', error);
     process.exit(1);
   }
 }
 
-build();
+void build();

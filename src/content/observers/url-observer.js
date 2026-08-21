@@ -1,17 +1,13 @@
 /**
- * Tracks ChatGPT SPA route changes and reports conversation switches.
- *
- * A small polling fallback is intentionally used because pushState does not emit
- * popstate. This avoids monkey-patching the page History API from an extension.
+ * Tracks ChatGPT SPA route changes without monkey-patching the page History API.
  */
 
 import { log, extractConversationId } from '../../shared/utils.js';
-import { isConversationPage } from '../utils/dom-helper.js';
 
 export class URLObserver {
   constructor() {
     this.currentUrl = window.location.href;
-    this.currentConversationId = null;
+    this.currentConversationId = extractConversationId();
     this.callback = null;
     this.pollingInterval = null;
     this.isRunning = false;
@@ -32,7 +28,6 @@ export class URLObserver {
 
   stop() {
     if (!this.isRunning) return;
-
     window.removeEventListener('popstate', this.handlePopState);
     if (this.pollingInterval) clearInterval(this.pollingInterval);
     this.pollingInterval = null;
@@ -49,17 +44,15 @@ export class URLObserver {
     if (!force && newUrl === this.currentUrl) return;
     this.currentUrl = newUrl;
 
-    if (!isConversationPage()) return;
-
     const newConversationId = extractConversationId();
-    if (!newConversationId || newConversationId === this.currentConversationId) return;
+    if (newConversationId === this.currentConversationId) return;
 
     const oldConversationId = this.currentConversationId;
     this.currentConversationId = newConversationId;
 
-    log('info', 'URLObserver', 'Conversation switched', {
+    log('info', 'URLObserver', 'Conversation route changed', {
       from: oldConversationId || '(none)',
-      to: newConversationId
+      to: newConversationId || '(none)'
     });
 
     if (!this.callback) return;
@@ -70,14 +63,6 @@ export class URLObserver {
     } catch (error) {
       log('error', 'URLObserver', 'Callback error:', error);
     }
-  }
-
-  getCurrentConversationId() {
-    return this.currentConversationId;
-  }
-
-  isObserving() {
-    return this.isRunning;
   }
 }
 

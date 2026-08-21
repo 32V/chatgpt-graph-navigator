@@ -3,41 +3,37 @@
 
   <h1>ChatGPT Graph Navigator</h1>
   <p><strong>A native-feeling conversation tree for ChatGPT.</strong></p>
-
-  <p>
-    <img alt="Chrome" src="https://img.shields.io/badge/Chrome-Extension-blue?logo=googlechrome&logoColor=white" />
-    <img alt="Manifest" src="https://img.shields.io/badge/Manifest-V3-10b981" />
-    <img alt="React" src="https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white" />
-    <img alt="React Flow" src="https://img.shields.io/badge/React%20Flow-12-111827" />
-  </p>
 </div>
 
-ChatGPT Graph Navigator turns a branched ChatGPT conversation into an interactive graph and timeline. It runs directly on `chatgpt.com`, follows ChatGPT's light and dark themes, and keeps the graph available as a collapsible right-hand panel.
+ChatGPT Graph Navigator turns branched ChatGPT conversations into an interactive graph and timeline directly inside `chatgpt.com`. It follows ChatGPT's light and dark themes and opens automatically as a collapsible, resizable right-hand dock.
 
-The extension is intentionally English-only.
+The project is intentionally English-only.
 
 ## Highlights
 
-- **Automatic docked panel** — opens on ChatGPT conversation pages and can be collapsed or resized.
+- **Automatic docked panel** — opens on ChatGPT conversation routes, resizes with the page, and can collapse to a narrow rail.
 - **Graph view** — inspect the full conversation topology, pan and zoom, and focus individual nodes.
-- **Timeline tree** — browse the same conversation in a compact Git-style hierarchy with search and filtering.
-- **Branch-aware navigation** — click a node to move ChatGPT to the corresponding message and branch.
-- **Restored in-place version navigation** — a compatibility layer restores ChatGPT's edited-message pagination when the current frontend experiment hides it.
-- **Canonical topology** — the graph is rebuilt from ChatGPT's backend conversation mapping rather than inferred from fragile DOM adjacency.
-- **Theme matching** — the panel derives its surfaces, borders, text colors, and controls from the active ChatGPT theme.
-- **Stable answer expansion** — revealing a collapsed assistant response does not relayout unrelated nodes.
-- **Local persistence** — conversation graph data and extension preferences are stored in the browser.
+- **Timeline tree** — browse the same conversation as a compact hierarchy with search and filtering.
+- **Branch-aware navigation** — click a graph or tree node to switch ChatGPT to the corresponding message version and branch.
+- **Native branch-state sync** — ChatGPT's backend `current_node` determines the active branch, including when you switch versions with ChatGPT's own `1/N` controls.
+- **Restored in-place version navigation** — a small `document_start` compatibility layer restores edited-message pagination when a ChatGPT frontend experiment hides it.
+- **Canonical topology** — graph ancestry comes from ChatGPT's backend conversation `mapping`, never DOM sibling order.
+- **Stable answer expansion** — revealing a collapsed single assistant response does not move unrelated graph nodes.
+- **Stable message details** — full-message text opens as an overlay without changing Dagre node geometry.
+- **ChatGPT-native styling** — the dock derives its visual system from the active ChatGPT theme.
+- **Local persistence** — normalized graph data and preferences stay in the browser.
 
 ## Graph controls
 
 | Interaction | Action |
 | --- | --- |
-| Left-click a node | Navigate ChatGPT to that message/branch |
+| Left-click a node | Navigate ChatGPT to that message and branch |
 | Double-click a node | Focus the graph viewport on that node |
 | Drag the canvas | Pan the graph |
 | Right-drag the canvas | Pan without opening the browser context menu |
 | Mouse wheel / trackpad | Pan or zoom through React Flow controls |
 | `+` / `-` on a question | Reveal or hide its single assistant response |
+| Message-detail button | Show or hide the full message without relayout |
 | Panel left edge | Resize the dock |
 | Panel chevron | Collapse or expand the dock |
 
@@ -45,26 +41,20 @@ The extension is intentionally English-only.
 
 ### GitHub Actions artifact
 
-Every push builds a ready-to-load extension artifact.
+Every push builds a ready-to-load Chrome extension artifact.
 
 1. Open the repository's **Actions** tab.
 2. Select **Build installable extension**.
-3. Open the latest successful run for your branch.
-4. Download the `chatgpt-graph-extension-...` artifact.
-5. Extract it.
-6. Open `chrome://extensions`.
-7. Enable **Developer mode**.
-8. Choose **Load unpacked** and select the extracted directory that contains `manifest.json`.
+3. Open the latest successful run for the branch you want.
+4. Download and extract the `chatgpt-graph-extension-...` artifact.
+5. Open `chrome://extensions` and enable **Developer mode**.
+6. Choose **Load unpacked** and select the extracted directory containing `manifest.json`.
 
-After updating the extension, reload the extension in `chrome://extensions` and refresh existing ChatGPT tabs. The edited-message compatibility layer runs at `document_start`, so a page refresh is required after an extension update.
+After an extension update, reload the extension and refresh existing ChatGPT tabs. The edited-message compatibility layer runs at `document_start`, so it cannot retrofit an already bootstrapped page.
 
-### Local build
+### Local development
 
-Requirements:
-
-- Node.js 18 or newer
-- npm
-- Chrome or another Chromium-based browser
+Requirements: Node.js 18+, npm, and a Chromium-based browser.
 
 ```bash
 git clone https://github.com/32V/chatgpt-graph-navigator.git
@@ -73,95 +63,83 @@ npm ci
 npm run build
 ```
 
-For watch mode:
-
-```bash
-npm run dev
-```
-
-For a packaged release:
-
-```bash
-npm run release
-```
-
-The loadable extension is written to `release/`, and the release script also creates a ZIP archive.
+Use `npm run dev` for watch mode or `npm run release` to create `release/` plus a ZIP archive.
 
 ## Architecture
 
-The extension has four main runtime pieces:
-
 ```text
 ChatGPT page
-├── document_start MAIN-world compatibility layer
-├── content script
-│   ├── canonical conversation API sync
-│   ├── branch navigation actuator
-│   ├── DOM observers used as change signals
-│   └── docked panel host
+├── MAIN-world compatibility adapter (document_start)
+├── content integration
+│   ├── canonical mapping + current_node sync
+│   ├── DOM change signals
+│   ├── branch-navigation actuator
+│   └── right-dock host
 │
 ├── service worker
 │   ├── message routing
-│   ├── token capture
-│   └── IndexedDB persistence
+│   ├── ChatGPT token capture
+│   └── IndexedDB: conversations + nodes + edges
 │
-└── embedded React panel
+└── embedded React UI
     ├── Graph view
     └── Timeline tree
 ```
 
-The important design rule is that **ChatGPT's backend `mapping` is the source of truth for conversation topology**. The DOM is used only where the extension must interact with ChatGPT's visible UI, such as selecting a native branch control or scrolling a virtualized turn into view.
+Two rules drive the implementation:
+
+1. ChatGPT's backend `mapping` defines conversation topology, and `current_node` defines the active branch.
+2. The DOM is used only to detect that canonical data may have changed or to actuate visible ChatGPT controls.
 
 See [docs/architecture.md](docs/architecture.md) for details.
 
 ## Project structure
 
 ```text
-├── _locales/en/                 # English Chrome i18n catalog
-├── assets/                      # Extension icons and UI assets
+├── assets/                      # Extension icons and active UI assets
 ├── docs/                        # Architecture and development notes
 ├── scripts/                     # Release and regression checks
 ├── src/
 │   ├── background/              # MV3 service worker and persistence
 │   ├── content/                 # ChatGPT integration and navigation
-│   ├── popup/                   # Extension settings popup
-│   ├── setup/                   # Manual token setup page
-│   ├── shared/                  # Shared constants and helpers
-│   └── sidepanel/               # React graph/timeline interface
+│   ├── popup/                   # Settings popup
+│   ├── setup/                   # Optional manual token setup
+│   ├── shared/                  # Small cross-context helpers
+│   └── sidepanel/               # Embedded React graph/timeline UI
 ├── build.js                     # esbuild configuration
 └── manifest.json                # Chrome extension manifest
 ```
 
-## Development checks
+## Regression checks
 
-The build workflow runs regression checks before packaging:
+CI runs the same checks before packaging:
 
 ```bash
 node scripts/check-no-chinese.mjs
 node scripts/test-edit-pagination-compat.mjs
+node scripts/test-current-node.mjs
+node scripts/test-qa-tree-model.mjs
+node scripts/test-assistant-stream-normalizer.mjs
 node scripts/test-qa-tree-layout.mjs
 npm run release
 ```
 
-`check-no-chinese.mjs` enforces the repository's English-only source and documentation policy.
+The tests cover the early ChatGPT compatibility adapter, canonical active-branch resolution, QA-tree construction, assistant-stream normalization, and the invariant that revealing a single assistant response does not move existing graph nodes.
 
-## Notes on ChatGPT compatibility
+## Compatibility notes
 
-This project integrates with an evolving, private web application. ChatGPT may change its DOM structure, virtualization behavior, or frontend experiments without notice. The implementation therefore minimizes DOM assumptions:
+ChatGPT is an evolving private web application. The extension therefore keeps frontend coupling in narrow adapters:
 
-- topology comes from the backend conversation mapping;
-- live DOM events trigger canonical resynchronization instead of creating graph ancestry;
-- active branch navigation is verified by message IDs rather than assumed from visual ordering;
-- edited-message pagination is restored before ChatGPT bootstraps when required by the active frontend experiment.
+- the early edited-message experiment compatibility layer;
+- native previous/next version-control discovery;
+- virtualized-turn mounting and scrolling.
+
+Graph topology, active-path selection, persistence, and visualization remain independent of DOM adjacency.
 
 ## Privacy
 
-Conversation data is processed locally by the extension and stored in browser storage. See [PRIVACY.md](PRIVACY.md) for the current privacy statement.
-
-## Contributing
-
-Bug reports and focused improvements are welcome. When changing branch navigation, topology parsing, or graph layout, add or update a regression test whenever practical.
+Conversation graph data and the ChatGPT access token are stored locally in the browser and are not sent to project-operated servers. See [PRIVACY.md](PRIVACY.md).
 
 ## License
 
-GPL-3.0. See the repository license for details.
+MIT.

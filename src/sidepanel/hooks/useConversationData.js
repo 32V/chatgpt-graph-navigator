@@ -1,24 +1,31 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { MESSAGE_TYPES } from '../../shared/constants';
+import { MESSAGE_TYPES } from '../../shared/constants.js';
 import { sendMessageToTabWithFallback } from '../../shared/tab-messaging.js';
-import { buildRounds } from '../../content/parser/branch-extractor.js';
 
-const CONVERSATION_ID_REGEX = /\/c\/([a-f0-9-]+)/;
+const CONVERSATION_ID_REGEX = /\/c\/([a-f0-9-]+)/i;
 
-function queryActiveTab() {
-  return new Promise((resolve) => {
-    try {
-      chrome.tabs.query({ active: true, currentWindow: true }, tabs => resolve(tabs || []));
-    } catch {
-      resolve([]);
-    }
-  });
+async function queryHostTab() {
+  try {
+    const tab = await chrome.tabs.getCurrent();
+    if (tab) return tab;
+  } catch {
+    // Some Chromium builds do not expose getCurrent() to extension iframes.
+  }
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab || null;
+  } catch {
+    return null;
+  }
 }
 
-async function getActiveConversationIdFromTab() {
-  const tabs = await queryActiveTab();
-  const match = (tabs?.[0]?.url || '').match(CONVERSATION_ID_REGEX);
-  return match?.[1] || null;
+function conversationIdFromUrl(url = '') {
+  return String(url).match(CONVERSATION_ID_REGEX)?.[1] || null;
+}
+
+async function getHostConversationId() {
+  return conversationIdFromUrl((await queryHostTab())?.url);
 }
 
 async function sendRuntimeMessage(message) {
@@ -28,33 +35,12 @@ async function sendRuntimeMessage(message) {
 
 function transformToGraphData(payload) {
   if (!payload) return null;
-
   const conversation = payload.conversation || payload;
-  const nodes = payload.nodes || conversation.nodes || [];
-  const edges = payload.edges || conversation.edges || [];
-  const storedRounds = payload.rounds || conversation.rounds || [];
-
-  let rounds = storedRounds;
-  if (nodes.length > 0) {
-    try {
-      rounds = buildRounds(nodes);
-    } catch (error) {
-      console.warn('[Panel] Failed to rebuild rounds, using stored rounds:', error?.message);
-    }
-  }
-
   return {
     id: conversation.id,
-    title: conversation.title || 'Untitled Conversation',
-    nodes,
-    edges,
-    rounds,
-    updatedAt: conversation.updateTime || Date.now(),
-    stats: {
-      totalRounds: rounds.length,
-      totalNodes: nodes.length || conversation.nodeCount || 0,
-      totalEdges: edges.length || conversation.edgeCount || 0
-    }
+    currentNodeId: conversation.currentNodeId || null,
+    nodes: payload.nodes || conversation.nodes || [],
+    edges: payload.edges || conversation.edges || []
   };
 }
 
@@ -63,28 +49,51 @@ export function useConversationData() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [currentNodeId, setCurrentNodeId] = useState(null);
-  const [activeConversationId, setActiveConversationId] = useState(null);
+
+  const activeConversationRef = useRef(null);
   const pendingRefreshes = useRef(new Set());
 
   const triggerContentRefresh = useCallback(async (conversationId) => {
     if (!conversationId || pendingRefreshes.current.has(conversationId)) return;
 
-    const [tab] = await queryActiveTab();
-    if (!tab?.id) return;
+    const tab = await queryHostTab();
+    if (!tab?.id || conversationIdFromUrl(tab.url) !== conversationId) return;
 
     pendingRefreshes.current.add(conversationId);
     const timeout = setTimeout(() => pendingRefreshes.current.delete(conversationId), 5000);
 
     try {
-      await sendMessageToTabWithFallback(tab.id, {
+      const response = await sendMessageToTabWithFallback(tab.id, {
         type: MESSAGE_TYPES.REFRESH_DATA,
         payload: { conversationId }
       });
-    } catch (error) {
-      console.warn('[Panel] Content refresh failed:', error?.message);
+      if (response?.success === false) {
+        pendingRefreshes.current.delete(conversationId);
+        clearTimeout(timeout);
+      }
+    } catch (refreshError) {
+      console.warn('[Panel] Content refresh failed:', refreshError?.message);
       pendingRefreshes.current.delete(conversationId);
       clearTimeout(timeout);
     }
+  }, []);
+
+  const navigateToMessage = useCallback(async (messageId) => {
+    if (!messageId) return false;
+
+    const tab = await queryHostTab();
+    const conversationId = conversationIdFromUrl(tab?.url);
+    if (!tab?.id || !conversationId || conversationId !== activeConversationRef.current) {
+      throw new Error('ChatGPT host tab is unavailable');
+    }
+
+    const response = await sendMessageToTabWithFallback(tab.id, {
+      type: MESSAGE_TYPES.SCROLL_TO_MESSAGE,
+      payload: { messageId }
+    }, {
+      retryDelayMs: 500
+    });
+    return response?.success !== false;
   }, []);
 
   const fetchConversation = useCallback(async (conversationId, options = {}) => {
@@ -92,6 +101,7 @@ export function useConversationData() {
 
     if (!conversationId) {
       setConversationData(null);
+      setCurrentNodeId(null);
       setIsLoading(false);
       return;
     }
@@ -105,48 +115,57 @@ export function useConversationData() {
         payload: { conversationId }
       });
 
+      // A route change may complete while this IndexedDB request is in flight.
+      if (activeConversationRef.current !== conversationId) return;
+
       if (response?.success && response.data) {
+        const graphData = transformToGraphData(response.data);
         pendingRefreshes.current.delete(conversationId);
-        setConversationData(transformToGraphData(response.data));
-        setActiveConversationId(conversationId);
-      } else {
-        setConversationData(null);
-        if (requestIfMissing) void triggerContentRefresh(conversationId);
+        setConversationData(graphData);
+        setCurrentNodeId(graphData.currentNodeId);
+        return;
       }
-    } catch (error) {
-      console.error('[Panel] Failed to fetch conversation:', error);
+
       setConversationData(null);
-      setError(error.message || 'Failed to load conversation data');
+      if (requestIfMissing) void triggerContentRefresh(conversationId);
+    } catch (fetchError) {
+      if (activeConversationRef.current !== conversationId) return;
+      console.error('[Panel] Failed to fetch conversation:', fetchError);
+      setConversationData(null);
+      setError(fetchError.message || 'Failed to load conversation data');
     } finally {
-      setIsLoading(false);
+      if (activeConversationRef.current === conversationId) setIsLoading(false);
     }
   }, [triggerContentRefresh]);
 
-  const syncWithActiveTab = useCallback(async () => {
-    const conversationId = await getActiveConversationIdFromTab();
+  const syncWithHostTab = useCallback(async () => {
+    const conversationId = await getHostConversationId();
+    if (conversationId === activeConversationRef.current) return;
+
+    activeConversationRef.current = conversationId;
+    setConversationData(null);
+    setCurrentNodeId(null);
+    setError(null);
 
     if (!conversationId) {
-      setActiveConversationId(null);
-      setConversationData(null);
-      setCurrentNodeId(null);
       setIsLoading(false);
       return;
     }
 
-    if (conversationId !== activeConversationId) {
-      setActiveConversationId(conversationId);
-      setCurrentNodeId(null);
-      await fetchConversation(conversationId);
-    }
-  }, [activeConversationId, fetchConversation]);
+    setIsLoading(true);
+    await fetchConversation(conversationId);
+  }, [fetchConversation]);
 
   const refreshData = useCallback(async () => {
-    const conversationId = await getActiveConversationIdFromTab();
+    const conversationId = await getHostConversationId();
     if (!conversationId) return;
 
-    setActiveConversationId(conversationId);
+    if (activeConversationRef.current !== conversationId) {
+      activeConversationRef.current = conversationId;
+      setConversationData(null);
+      setCurrentNodeId(null);
+    }
     await triggerContentRefresh(conversationId);
-    // DATA_READY will read the canonical snapshot after the content script saves it.
   }, [triggerContentRefresh]);
 
   useEffect(() => {
@@ -156,44 +175,38 @@ export function useConversationData() {
       if (!conversationId) return;
 
       pendingRefreshes.current.delete(conversationId);
-      if (conversationId === activeConversationId) {
+      if (conversationId === activeConversationRef.current) {
         void fetchConversation(conversationId, { requestIfMissing: false });
       }
     };
 
     chrome.runtime.onMessage.addListener(handleMessage);
     return () => chrome.runtime.onMessage.removeListener(handleMessage);
-  }, [activeConversationId, fetchConversation]);
+  }, [fetchConversation]);
 
   useEffect(() => {
-    void syncWithActiveTab();
+    void syncWithHostTab();
 
-    const onActivated = () => void syncWithActiveTab();
-    const onUpdated = (_tabId, changeInfo, tab) => {
-      if (tab?.active && changeInfo?.url) void syncWithActiveTab();
+    const onUpdated = (_tabId, changeInfo) => {
+      if (changeInfo?.url) void syncWithHostTab();
     };
 
-    chrome.tabs.onActivated.addListener(onActivated);
     chrome.tabs.onUpdated.addListener(onUpdated);
-
-    // ChatGPT is an SPA; URL polling covers route changes that do not surface
-    // through chrome.tabs.onUpdated in every browser build.
-    const timer = setInterval(() => void syncWithActiveTab(), 1500);
+    const timer = setInterval(() => void syncWithHostTab(), 1500);
 
     return () => {
-      chrome.tabs.onActivated.removeListener(onActivated);
       chrome.tabs.onUpdated.removeListener(onUpdated);
       clearInterval(timer);
     };
-  }, [syncWithActiveTab]);
+  }, [syncWithHostTab]);
 
   return {
     conversationData,
     isLoading,
     error,
     refreshData,
+    navigateToMessage,
     currentNodeId,
-    setCurrentNodeId,
-    activeConversationId
+    setCurrentNodeId
   };
 }
