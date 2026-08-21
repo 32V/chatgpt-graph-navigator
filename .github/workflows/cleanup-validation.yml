@@ -45,53 +45,59 @@ jobs:
           git push origin HEAD:"${GITHUB_REF_NAME}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Install dependencies
-        if: steps.normalize.outputs.changed == 'false'
-        run: npm ci
-
-      - name: Check English-only source and docs
-        if: steps.normalize.outputs.changed == 'false'
-        run: node scripts/check-no-chinese.mjs
-
-      - name: Test edit-pagination compatibility
-        if: steps.normalize.outputs.changed == 'false'
-        run: node scripts/test-edit-pagination-compat.mjs
-
-      - name: Test canonical current node
-        if: steps.normalize.outputs.changed == 'false'
-        run: node scripts/test-current-node.mjs
-
-      - name: Test stable graph layout
-        if: steps.normalize.outputs.changed == 'false'
-        run: node scripts/test-qa-tree-layout.mjs
-
-      - name: Build production extension
-        if: steps.normalize.outputs.changed == 'false'
-        run: npm run release
-
-      - name: Verify packaged extension
+      - name: Run complete validation
         if: steps.normalize.outputs.changed == 'false'
         shell: bash
         run: |
           set -euo pipefail
-          test -f release/manifest.json
-          test -f release/dist/edit-pagination-compat.js
-          test -f release/dist/docked-panel.js
-          test -f release/dist/docked-panel.css
-          test -f release/dist/content.js
-          test -f release/dist/background.js
-          test -f release/dist/popup.js
-          test -f release/dist/setup.js
-          test -f release/dist/sidepanel.js
-          test -f release/dist/sidepanel.css
-          test ! -e release/dist/docked-panel-theme.css
-          test ! -e release/dist/chatgpt-theme.css
-          test ! -e release/dist/graph-ux.css
-          test ! -d release/_locales
-          node -e "JSON.parse(require('fs').readFileSync('release/manifest.json', 'utf8'))"
+          {
+            echo '== npm ci =='
+            npm ci
+            echo '== English-only check =='
+            node scripts/check-no-chinese.mjs
+            echo '== edit-pagination compatibility =='
+            node scripts/test-edit-pagination-compat.mjs
+            echo '== canonical current node =='
+            node scripts/test-current-node.mjs
+            echo '== stable graph layout =='
+            node scripts/test-qa-tree-layout.mjs
+            echo '== production release =='
+            npm run release
+            echo '== packaged extension =='
+            test -f release/manifest.json
+            test -f release/dist/edit-pagination-compat.js
+            test -f release/dist/docked-panel.js
+            test -f release/dist/docked-panel.css
+            test -f release/dist/content.js
+            test -f release/dist/background.js
+            test -f release/dist/popup.js
+            test -f release/dist/setup.js
+            test -f release/dist/sidepanel.js
+            test -f release/dist/sidepanel.css
+            test ! -e release/dist/docked-panel-theme.css
+            test ! -e release/dist/chatgpt-theme.css
+            test ! -e release/dist/graph-ux.css
+            test ! -d release/_locales
+            node -e "JSON.parse(require('fs').readFileSync('release/manifest.json', 'utf8'))"
+          } 2>&1 | tee cleanup-validation.log
+
+      - name: Capture validation failure
+        if: failure() && steps.normalize.outputs.changed == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -e scripts/validation-failure.log; then
+            exit 0
+          fi
+          cp cleanup-validation.log scripts/validation-failure.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/validation-failure.log
+          git commit -m "chore(ci): capture cleanup validation failure"
+          git push origin HEAD:"${GITHUB_REF_NAME}"
 
       - name: Mark validated head
-        if: steps.normalize.outputs.changed == 'false'
+        if: success() && steps.normalize.outputs.changed == 'false'
         shell: bash
         run: |
           set -euo pipefail
