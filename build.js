@@ -40,8 +40,8 @@ const builds = [
   },
   {
     ...commonOptions,
-    entryPoints: ['src/content/ui/docked-panel-theme.css'],
-    outfile: 'dist/docked-panel-theme.css'
+    entryPoints: ['src/content/ui/docked-panel.css'],
+    outfile: 'dist/docked-panel.css'
   },
   {
     ...commonOptions,
