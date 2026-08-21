@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { buildQATree, updateSelectedPath } from '../utils/qa-tree.js';
 
 /**
- * Build the QA tree and keep its selected path aligned with ChatGPT's canonical
- * `current_node`. Local node clicks still update immediately while the backend
- * snapshot catches up.
+ * Build the QA tree from graph structure and update only the selected path when
+ * ChatGPT's canonical `current_node` changes. Keeping the structural tree object
+ * stable prevents unrelated tree-view expansion state from resetting.
  */
 export function useQATree(nodes, edges, options = {}) {
   const { activeNodeId = null } = options;
@@ -15,15 +15,20 @@ export function useQATree(nodes, edges, options = {}) {
       setTree(null);
       return;
     }
+    setTree(buildQATree(nodes, edges || []));
+  }, [nodes, edges]);
 
-    const nextTree = buildQATree(nodes, edges || []);
-    const hasActiveNode = Boolean(
-      activeNodeId &&
-      (nextTree.qNodeMap.has(activeNodeId) || nextTree.aNodeMap.has(activeNodeId))
-    );
-
-    setTree(hasActiveNode ? updateSelectedPath(nextTree, activeNodeId) : nextTree);
-  }, [nodes, edges, activeNodeId]);
+  useEffect(() => {
+    if (!activeNodeId) return;
+    setTree(currentTree => {
+      if (!currentTree) return currentTree;
+      if (!currentTree.qNodeMap.has(activeNodeId) && !currentTree.aNodeMap.has(activeNodeId)) {
+        return currentTree;
+      }
+      if (currentTree.activeLeafId === activeNodeId) return currentTree;
+      return updateSelectedPath(currentTree, activeNodeId);
+    });
+  }, [activeNodeId]);
 
   const selectNode = useCallback((nodeId) => {
     if (!nodeId) return;
