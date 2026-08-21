@@ -48,9 +48,9 @@ DOM-dependent code should be limited to:
 
 Graph construction, persistence, and selected-path computation should remain independent of CSS utility classes and sibling order.
 
-### Preserve stable answer expansion
+### Preserve graph geometry
 
-Revealing a collapsed single assistant response must not move existing graph nodes. Dagre lays out the base graph first; compact answer nodes are inserted afterward into reserved inter-rank space. Update `scripts/test-qa-tree-layout.mjs` if this behavior changes.
+Revealing a collapsed single assistant response must not move existing graph nodes. Dagre lays out the base graph first; compact answer nodes are inserted afterward into reserved inter-rank space. Full-message details likewise render as an overlay instead of changing the fixed graph-card dimensions. Update `scripts/test-qa-tree-layout.mjs` if layout behavior changes.
 
 ## Source layout
 
@@ -86,15 +86,19 @@ Run the same checks as CI:
 node scripts/check-no-chinese.mjs
 node scripts/test-edit-pagination-compat.mjs
 node scripts/test-current-node.mjs
+node scripts/test-qa-tree-model.mjs
+node scripts/test-assistant-stream-normalizer.mjs
 node scripts/test-qa-tree-layout.mjs
 npm run release
 ```
 
-The tests cover:
+The checks cover:
 
 - the English-only repository policy;
 - ChatGPT experiment normalization for in-place edited-message pagination;
 - canonical `current_node` resolution and selected-path construction;
+- normalized QA-tree structure and deterministic ordering;
+- assistant-stream grouping, rewiring, and deterministic edges;
 - graph-coordinate stability when revealing a single assistant response.
 
 ## Debugging
@@ -146,10 +150,12 @@ GitHub Actions builds a ready-to-load artifact on every branch push:
 2. English-only check
 3. pagination compatibility test
 4. canonical current-node test
-5. stable layout test
-6. `npm run release`
-7. package verification
-8. artifact upload
+5. QA-tree model test
+6. assistant-stream normalization test
+7. stable layout test
+8. `npm run release`
+9. package verification
+10. artifact upload
 
 ## References
 
