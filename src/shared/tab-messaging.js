@@ -20,13 +20,12 @@ export function isMissingReceiverError(error) {
 
 /**
  * Rehydrate page-side extension receivers in ChatGPT tabs that were already open
- * when the extension was reloaded. The normal manifest injection still handles
- * fresh navigations.
+ * when the extension was reloaded. Fresh navigations use manifest injection.
  */
 export async function ensurePageScripts(tabId, delayMs = 300) {
   await chrome.scripting.insertCSS({
     target: { tabId },
-    files: ['dist/docked-panel-theme.css']
+    files: ['dist/docked-panel.css']
   }).catch(() => {});
 
   await chrome.scripting.executeScript({
