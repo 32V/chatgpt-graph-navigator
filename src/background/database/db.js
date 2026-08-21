@@ -1,8 +1,23 @@
 /**
- * IndexedDB persistence wrapper.
+ * IndexedDB persistence for canonical conversation graphs.
  */
 
 import { DB_NAME, DB_VERSION, OBJECT_STORES, upgradeDatabase } from './schema.js';
+
+function requestResult(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function transactionDone(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error('IndexedDB transaction aborted'));
+  });
+}
 
 export class Database {
   constructor() {
@@ -10,19 +25,13 @@ export class Database {
     this.openPromise = null;
   }
 
-  _hasOwn(object, key) {
-    return Object.prototype.hasOwnProperty.call(object, key);
-  }
-
   async open() {
     if (this.db) return this.db;
-
     if (!this.openPromise) {
       this.openPromise = this._openWithRecovery().finally(() => {
         this.openPromise = null;
       });
     }
-
     return this.openPromise;
   }
 
@@ -31,7 +40,6 @@ export class Database {
       return await this._openDatabase();
     } catch (error) {
       if (!hasRetried && this._shouldResetDatabase(error)) {
-        console.warn('[DB] Open failed, resetting database and retrying:', error);
         await this._resetDatabase();
         return this._openWithRecovery(true);
       }
@@ -51,29 +59,22 @@ export class Database {
 
   _openDatabase() {
     return new Promise((resolve, reject) => {
-      console.log(`[DB] Opening database: ${DB_NAME} v${DB_VERSION}`);
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-      request.onerror = () => {
-        console.error('[DB] Failed to open database:', {
-          name: request.error?.name,
-          message: request.error?.message,
-          error: request.error
-        });
-        reject(request.error);
+      request.onupgradeneeded = (event) => {
+        try {
+          upgradeDatabase(event.target.result);
+        } catch (error) {
+          reject(error);
+        }
       };
 
       request.onsuccess = () => {
         this.db = request.result;
-        console.log('[DB] Database opened successfully');
-        console.log('[DB] Object stores:', Array.from(this.db.objectStoreNames));
-
-        const requiredStores = Object.keys(OBJECT_STORES);
-        const missingStores = requiredStores.filter(store => !this.db.objectStoreNames.contains(store));
+        const missingStores = Object.keys(OBJECT_STORES)
+          .filter(storeName => !this.db.objectStoreNames.contains(storeName));
 
         if (missingStores.length > 0) {
-          console.error('[DB] Missing object stores:', missingStores);
-          console.error('[DB] Database structure is invalid. Attempting recovery.');
           this.db.close();
           this.db = null;
           reject(new Error(`Missing object stores: ${missingStores.join(', ')}`));
@@ -83,290 +84,102 @@ export class Database {
         resolve(this.db);
       };
 
-      request.onupgradeneeded = (event) => {
-        console.log('[DB] onupgradeneeded triggered');
-        const db = event.target.result;
-        try {
-          upgradeDatabase(db, event);
-        } catch (error) {
-          console.error('[DB] Error during upgrade:', error);
-          reject(error);
-        }
-      };
-
-      request.onblocked = () => {
-        console.warn('[DB] Database upgrade blocked. Close all tabs using this database.');
-      };
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => console.warn('[DB] Upgrade blocked by another extension context');
     });
   }
 
   async _resetDatabase() {
     this.close();
-
-    return new Promise((resolve, reject) => {
+    await new Promise((resolve, reject) => {
       const request = indexedDB.deleteDatabase(DB_NAME);
-
-      request.onsuccess = () => {
-        console.warn('[DB] Database reset completed');
-        resolve();
-      };
-      request.onerror = () => {
-        console.error('[DB] Failed to reset database:', request.error);
-        reject(request.error);
-      };
-      request.onblocked = () => {
-        const error = new Error('Database reset blocked');
-        console.error('[DB] Database reset blocked. Close other extension contexts and retry.');
-        reject(error);
-      };
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error('Database reset blocked'));
     });
   }
 
   async saveConversation(conversation) {
     const db = await this.open();
     const tx = db.transaction('conversations', 'readwrite');
-    const store = tx.objectStore('conversations');
-
-    return new Promise((resolve, reject) => {
-      const request = store.put(conversation);
-      request.onsuccess = () => {
-        console.log(`[DB] Conversation saved: ${conversation.id}`);
-        resolve();
-      };
-      request.onerror = () => {
-        console.error('[DB] Failed to save conversation:', request.error);
-        reject(request.error);
-      };
-    });
-  }
-
-  async updateConversation(id, updates) {
-    const existing = await this.getConversation(id);
-    if (!existing) throw new Error(`Conversation not found: ${id}`);
-
-    await this.saveConversation({ ...existing, ...updates });
-
-    // Graph records are whole-conversation snapshots, not append-only logs.
-    // Replace the old records so stale nodes cannot survive a canonical refresh.
-    await this.replaceConversationGraphData(id, updates);
-    console.log(`[DB] ✓ Conversation updated: ${id}`);
-  }
-
-  async replaceConversationGraphData(conversationId, data = {}) {
-    const replacements = [
-      { key: 'nodes', storeName: 'nodes', saver: items => this.saveNodes(items) },
-      { key: 'edges', storeName: 'edges', saver: items => this.saveEdges(items) },
-      { key: 'rounds', storeName: 'rounds', saver: items => this.saveRounds(items) },
-      { key: 'branches', storeName: 'branches', saver: items => this.saveBranches(items) }
-    ];
-
-    for (const { key, storeName, saver } of replacements) {
-      if (!this._hasOwn(data, key)) continue;
-
-      const items = Array.isArray(data[key]) ? data[key] : [];
-      await this.deleteRecordsByConversation(storeName, conversationId);
-
-      if (items.length > 0) {
-        await saver(items);
-      } else {
-        console.log(`[DB] Cleared ${storeName} for conversation: ${conversationId}`);
-      }
-    }
-  }
-
-  async deleteRecordsByConversation(storeName, conversationId) {
-    const db = await this.open();
-
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      const index = store.index('conversationId');
-      let deletedCount = 0;
-      let settled = false;
-
-      const finishError = (error) => {
-        if (settled) return;
-        settled = true;
-        reject(error);
-      };
-
-      tx.oncomplete = () => {
-        if (settled) return;
-        settled = true;
-        if (deletedCount > 0) {
-          console.log(`[DB] Deleted ${deletedCount} ${storeName} record(s) for conversation: ${conversationId}`);
-        }
-        resolve(deletedCount);
-      };
-      tx.onerror = () => finishError(tx.error || new Error(`Failed to delete ${storeName} records`));
-      tx.onabort = () => finishError(tx.error || new Error(`Aborted deleting ${storeName} records`));
-
-      const request = index.openCursor(IDBKeyRange.only(conversationId));
-      request.onsuccess = (event) => {
-        const cursor = event.target.result;
-        if (!cursor) return;
-        store.delete(cursor.primaryKey);
-        deletedCount += 1;
-        cursor.continue();
-      };
-      request.onerror = () => finishError(request.error);
-    });
+    tx.objectStore('conversations').put(conversation);
+    await transactionDone(tx);
   }
 
   async getConversation(id) {
     const db = await this.open();
     const tx = db.transaction('conversations', 'readonly');
-    const store = tx.objectStore('conversations');
-
-    return new Promise((resolve, reject) => {
-      const request = store.get(id);
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
+    return (await requestResult(tx.objectStore('conversations').get(id))) || null;
   }
 
-  async saveNodes(nodes) {
+  async _replaceStoreRecords(storeName, conversationId, items) {
     const db = await this.open();
-    const store = db.transaction('nodes', 'readwrite').objectStore('nodes');
-    await Promise.all(nodes.map(node => new Promise((resolve, reject) => {
-      const request = store.put(node);
-      request.onsuccess = () => resolve();
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    const index = store.index('conversationId');
+
+    await new Promise((resolve, reject) => {
+      const request = index.openCursor(IDBKeyRange.only(conversationId));
+      request.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        cursor.delete();
+        cursor.continue();
+      };
       request.onerror = () => reject(request.error);
-    })));
-    console.log(`[DB] Saved ${nodes.length} nodes`);
+    });
+
+    for (const item of items || []) store.put(item);
+    await transactionDone(tx);
+  }
+
+  async saveNodes(conversationId, nodes) {
+    await this._replaceStoreRecords('nodes', conversationId, nodes);
+  }
+
+  async saveEdges(conversationId, edges) {
+    await this._replaceStoreRecords('edges', conversationId, edges);
   }
 
   async getNodes(conversationId) {
     const db = await this.open();
-    const index = db.transaction('nodes', 'readonly').objectStore('nodes').index('conversationId');
-    return new Promise((resolve, reject) => {
-      const request = index.getAll(conversationId);
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async saveEdges(edges) {
-    const db = await this.open();
-    const store = db.transaction('edges', 'readwrite').objectStore('edges');
-    await Promise.all(edges.map(edge => new Promise((resolve, reject) => {
-      const request = store.put(edge);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    })));
-    console.log(`[DB] Saved ${edges.length} edges`);
+    const tx = db.transaction('nodes', 'readonly');
+    const index = tx.objectStore('nodes').index('conversationId');
+    return (await requestResult(index.getAll(conversationId))) || [];
   }
 
   async getEdges(conversationId) {
     const db = await this.open();
-    const index = db.transaction('edges', 'readonly').objectStore('edges').index('conversationId');
-    return new Promise((resolve, reject) => {
-      const request = index.getAll(conversationId);
-      request.onsuccess = () => {
-        const edges = request.result || [];
-        edges.sort((a, b) => (a.orderKey || 0) - (b.orderKey || 0));
-        resolve(edges);
-      };
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async getRounds(conversationId) {
-    const db = await this.open();
-    const index = db.transaction('rounds', 'readonly').objectStore('rounds').index('conversationId');
-    return new Promise((resolve, reject) => {
-      const request = index.getAll(conversationId);
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async saveRounds(rounds) {
-    const db = await this.open();
-    const store = db.transaction('rounds', 'readwrite').objectStore('rounds');
-    await Promise.all(rounds.map(round => new Promise((resolve, reject) => {
-      const request = store.put(round);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    })));
-    console.log(`[DB] Saved ${rounds.length} rounds`);
-  }
-
-  async saveBranches(branches) {
-    const db = await this.open();
-    const store = db.transaction('branches', 'readwrite').objectStore('branches');
-    const withConversationId = branches.map(branch => ({
-      ...branch,
-      conversationId: branch.path[0]?.conversationId || 'unknown'
-    }));
-
-    await Promise.all(withConversationId.map(branch => new Promise((resolve, reject) => {
-      const request = store.put(branch);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    })));
-    console.log(`[DB] Saved ${branches.length} branches`);
+    const tx = db.transaction('edges', 'readonly');
+    const index = tx.objectStore('edges').index('conversationId');
+    const edges = (await requestResult(index.getAll(conversationId))) || [];
+    return edges.sort((a, b) => (a.orderKey || 0) - (b.orderKey || 0));
   }
 
   async saveFullConversation(conversationData) {
-    console.log(`[DB] Saving full conversation: ${conversationData.id}`);
-
+    const conversationId = conversationData.id;
     await this.saveConversation({
-      id: conversationData.id,
+      id: conversationId,
       title: conversationData.title,
       createTime: conversationData.createTime,
       updateTime: conversationData.updateTime,
+      currentNodeId: conversationData.currentNodeId || null,
       nodeCount: conversationData.nodes?.length || 0,
-      edgeCount: conversationData.edges?.length || 0,
-      roundCount: conversationData.rounds?.length || 0,
-      branchCount: conversationData.branches?.length || 0
+      edgeCount: conversationData.edges?.length || 0
     });
 
-    await this.replaceConversationGraphData(conversationData.id, {
-      nodes: conversationData.nodes,
-      edges: conversationData.edges,
-      rounds: conversationData.rounds,
-      branches: conversationData.branches
-    });
-
-    console.log(`[DB] ✓ Full conversation saved: ${conversationData.id}`);
-  }
-
-  async getAllConversations() {
-    const db = await this.open();
-    const store = db.transaction('conversations', 'readonly').objectStore('conversations');
-    return new Promise((resolve, reject) => {
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async deleteConversation(conversationId) {
-    const db = await this.open();
-
-    await this.replaceConversationGraphData(conversationId, {
-      nodes: [],
-      edges: [],
-      rounds: [],
-      branches: []
-    });
-
-    const tx = db.transaction('conversations', 'readwrite');
-    await new Promise((resolve, reject) => {
-      const request = tx.objectStore('conversations').delete(conversationId);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-
-    console.log(`[DB] Conversation deleted: ${conversationId}`);
+    await Promise.all([
+      this.saveNodes(conversationId, conversationData.nodes || []),
+      this.saveEdges(conversationId, conversationData.edges || [])
+    ]);
   }
 
   close() {
-    if (!this.db) return;
-    this.db.close();
+    this.db?.close();
     this.db = null;
-    console.log('[DB] Database closed');
   }
 }
 
