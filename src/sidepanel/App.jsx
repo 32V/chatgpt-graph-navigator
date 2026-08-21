@@ -3,7 +3,6 @@ import ConversationGraph from './components/ConversationGraph';
 import GitTreeView from './components/GitTreeView';
 import { useConversationData } from './hooks/useConversationData';
 import { useQATree } from './hooks/useQATree';
-import { MESSAGE_TYPES } from '../shared/constants.js';
 
 const MINIMAP_VISIBLE_KEY = 'cg:minimap:visible:embedded';
 const VIEW_MODE_KEY = 'sidepanelViewMode';
@@ -28,6 +27,7 @@ function App() {
     isLoading,
     error,
     refreshData,
+    navigateToMessage,
     currentNodeId,
     setCurrentNodeId
   } = useConversationData();
@@ -101,15 +101,13 @@ function App() {
     setCurrentNodeId(nodeId);
     selectNode(nodeId);
 
-    chrome.runtime.sendMessage({
-      type: MESSAGE_TYPES.SCROLL_TO_MESSAGE,
-      payload: { messageId: nodeData?.messageId || nodeId }
-    }, () => {
-      if (chrome.runtime.lastError) {
-        console.warn('[Panel] Navigation request failed:', chrome.runtime.lastError.message);
-      }
+    void navigateToMessage(nodeData?.messageId || nodeId).catch((navigationError) => {
+      console.warn('[Panel] Navigation request failed:', navigationError?.message);
+      // Canonical synchronization will restore the real active path if the
+      // optimistic local selection could not be applied in ChatGPT.
+      void refreshData();
     });
-  }, [setCurrentNodeId, selectNode]);
+  }, [navigateToMessage, refreshData, setCurrentNodeId, selectNode]);
 
   let content;
   if (error) {
