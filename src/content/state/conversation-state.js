@@ -4,10 +4,7 @@ import {
 } from '../../shared/constants.js';
 
 /**
- * In-memory snapshot of the current canonical conversation.
- *
- * Live graph updates are reconciled from the backend mapping, so this class no
- * longer mutates graph ancestry from DOM-derived incremental messages.
+ * Minimal in-memory state needed by page navigation and synchronization.
  */
 class ConversationState {
   constructor() {
@@ -30,31 +27,15 @@ class ConversationState {
 
   initialize(conversationData) {
     this.conversationId = conversationData.id;
-    this.title = conversationData.title || null;
-    this.mapping = { ...(conversationData.mapping || {}) };
     this.nodes = conversationData.nodes || [];
-    this.edges = conversationData.edges || [];
-    this.rounds = conversationData.rounds || [];
-    this.branches = conversationData.branches || [];
-    this.analysis = conversationData.analysis || null;
-    this.createTime = conversationData.createTime || null;
-    this.updateTime = conversationData.updateTime || null;
-    this.lastUpdateTime = Date.now();
+    this.currentNodeId = conversationData.currentNodeId || null;
     this.isInitialized = true;
   }
 
   clear() {
     this.conversationId = null;
-    this.title = null;
-    this.mapping = {};
     this.nodes = [];
-    this.edges = [];
-    this.rounds = [];
-    this.branches = [];
-    this.analysis = null;
-    this.createTime = null;
-    this.updateTime = null;
-    this.lastUpdateTime = null;
+    this.currentNodeId = null;
     this.isInitialized = false;
   }
 
