@@ -22,6 +22,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
 const VERSION = pkg.version;
+const RELEASE_DIR = join(ROOT, 'release');
+const ZIP_NAME = `chatgpt-graph-extension-v${VERSION}.zip`;
 
 const FILES_TO_INCLUDE = [
   'manifest.json',
@@ -29,82 +31,33 @@ const FILES_TO_INCLUDE = [
   'src/popup/index.html',
   'src/sidepanel/index.html',
   'src/setup/index.html',
-  'assets',
-  '_locales'
+  'assets'
 ];
 
-const EXCLUDE_FILES = [
-  'icon1024.png'
-];
-
-const SCREENSHOTS_DIR = join(ROOT, 'docs', 'pic');
-const SCREENSHOTS = [
-  'float_main.png',
-  'main_feature.png'
-];
-
-const RELEASE_DIR = join(ROOT, 'release');
-const SCREENSHOTS_OUT_DIR = join(ROOT, 'release-screenshots');
-const ZIP_NAME = `chatgpt-graph-extension-v${VERSION}.zip`;
+const EXCLUDE_FILES = new Set(['icon1024.png']);
 
 async function main() {
-  console.log(`\n📦 Building release v${VERSION}...\n`);
+  console.log(`\nBuilding release v${VERSION}...\n`);
 
-  console.log('1. Building production bundles...');
-  try {
-    execSync('npm run build:release', { cwd: ROOT, stdio: 'inherit' });
-  } catch {
-    console.error('× Build failed');
-    process.exit(1);
-  }
+  execSync('npm run build:release', { cwd: ROOT, stdio: 'inherit' });
 
-  console.log('\n2. Preparing release directory...');
-  if (existsSync(RELEASE_DIR)) {
-    rmSync(RELEASE_DIR, { recursive: true });
-  }
+  if (existsSync(RELEASE_DIR)) rmSync(RELEASE_DIR, { recursive: true });
   mkdirSync(RELEASE_DIR, { recursive: true });
 
-  console.log('3. Copying extension files...');
   for (const file of FILES_TO_INCLUDE) {
     const src = join(ROOT, file);
+    if (!existsSync(src)) throw new Error(`Required release path is missing: ${file}`);
     const dest = join(RELEASE_DIR, file);
-
-    if (!existsSync(src)) {
-      console.warn(`   ⚠ Skipping missing path: ${file}`);
-      continue;
-    }
-
     mkdirSync(dirname(dest), { recursive: true });
     copyRecursive(src, dest);
-    console.log(`   ✓ ${file}`);
   }
 
-  console.log('4. Copying Chrome Web Store screenshots...');
-  if (existsSync(SCREENSHOTS_OUT_DIR)) {
-    rmSync(SCREENSHOTS_OUT_DIR, { recursive: true });
-  }
-  mkdirSync(SCREENSHOTS_OUT_DIR, { recursive: true });
-
-  for (const screenshot of SCREENSHOTS) {
-    const src = join(SCREENSHOTS_DIR, screenshot);
-    const dest = join(SCREENSHOTS_OUT_DIR, screenshot);
-    if (existsSync(src)) {
-      copyFileSync(src, dest);
-      console.log(`   ✓ ${screenshot}`);
-    } else {
-      console.warn(`   ⚠ Skipping missing screenshot: ${screenshot}`);
-    }
-  }
-
-  console.log('\n5. Creating ZIP archive...');
   const zipPath = join(ROOT, ZIP_NAME);
+  if (existsSync(zipPath)) rmSync(zipPath);
   await createZip(RELEASE_DIR, zipPath);
 
-  console.log('\n✅ Release complete!');
-  console.log('   📁 Extension: release/');
-  console.log(`   📦 Archive: ${ZIP_NAME}`);
-  console.log('   🖼️  Screenshots: release-screenshots/');
-  console.log(`\n   Upload ${ZIP_NAME} to the Chrome Web Store when publishing.\n`);
+  console.log(`Release ready: ${RELEASE_DIR}`);
+  console.log(`Archive: ${ZIP_NAME}`);
 }
 
 function copyRecursive(src, dest) {
@@ -113,10 +66,7 @@ function copyRecursive(src, dest) {
   if (stat.isDirectory()) {
     mkdirSync(dest, { recursive: true });
     for (const child of readdirSync(src)) {
-      if (EXCLUDE_FILES.includes(child)) {
-        console.log(`   ⊘ Excluded: ${child}`);
-        continue;
-      }
+      if (EXCLUDE_FILES.has(child)) continue;
       copyRecursive(join(src, child), join(dest, child));
     }
     return;
@@ -132,10 +82,10 @@ function createZip(sourceDir, outPath) {
 
     output.on('close', () => {
       const size = (archive.pointer() / 1024).toFixed(1);
-      console.log(`   ✓ ${basename(outPath)} (${size} KB)`);
+      console.log(`${basename(outPath)} (${size} KB)`);
       resolve();
     });
-
+    output.on('error', reject);
     archive.on('error', reject);
     archive.pipe(output);
     archive.directory(sourceDir, false);
@@ -143,4 +93,7 @@ function createZip(sourceDir, outPath) {
   });
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error('Release failed:', error);
+  process.exit(1);
+});
