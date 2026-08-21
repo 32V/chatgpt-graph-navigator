@@ -31,11 +31,17 @@ const defaultEdgeOptions = {
 };
 
 function getTreeStructureKey(qaTree) {
-  if (!qaTree?.parentMap) return '';
-  return Array.from(qaTree.parentMap.entries())
-    .map(([child, parent]) => `${child}:${parent || ''}`)
-    .sort()
-    .join('|');
+  if (!qaTree) return '';
+
+  const nodeIds = [
+    ...Array.from(qaTree.qNodeMap?.keys?.() || [], id => `q:${id}`),
+    ...Array.from(qaTree.aNodeMap?.keys?.() || [], id => `a:${id}`)
+  ];
+  const parents = Array.from(qaTree.parentMap?.entries?.() || [], ([child, parent]) =>
+    `p:${child}:${parent || ''}`
+  );
+
+  return [...nodeIds, ...parents].sort().join('|');
 }
 
 function GraphContent({
@@ -64,21 +70,26 @@ function GraphContent({
   }, []);
 
   useEffect(() => {
+    setExpandedQNodes(previous => {
+      if (!qaTree?.qNodeMap) return previous.size === 0 ? previous : new Set();
+
+      let changed = false;
+      const next = new Set();
+      for (const id of previous) {
+        if (qaTree.qNodeMap.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : previous;
+    });
+  }, [qaTree]);
+
+  useEffect(() => {
     if (!qaTree?.root?.questions?.length) {
       setNodes([]);
       setEdges([]);
-      setExpandedQNodes(new Set());
       previousStructureKeyRef.current = '';
       return;
     }
-
-    setExpandedQNodes(previous => {
-      const next = new Set(previous);
-      for (const id of Array.from(next)) {
-        if (!qaTree.qNodeMap?.has(id)) next.delete(id);
-      }
-      return next;
-    });
 
     const structureChanged = previousStructureKeyRef.current !== structureKey;
     previousStructureKeyRef.current = structureKey;
