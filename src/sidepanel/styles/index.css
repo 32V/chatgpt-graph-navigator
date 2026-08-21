@@ -83,27 +83,6 @@ button {
   background: var(--cg-bg);
 }
 
-/* Standalone panel toolbar. The in-page dock supplies its own outer header. */
-.header {
-  min-height: 44px;
-  padding: 7px 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  flex: 0 0 auto;
-  background: var(--cg-bg);
-  border-bottom: 1px solid var(--cg-border-subtle);
-}
-
-.header-toolbar-left,
-.header-toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.view-toggle,
 .git-filter-toggle,
 .git-font-control {
   display: inline-flex;
@@ -115,10 +94,6 @@ button {
   background: var(--cg-surface);
 }
 
-.view-toggle-btn,
-.icon-btn,
-.minimap-btn,
-.refresh-btn,
 .git-collapse-btn,
 .git-filter-btn,
 .git-search-clear,
@@ -131,10 +106,6 @@ button {
   transition: background-color var(--cg-transition), color var(--cg-transition), opacity var(--cg-transition);
 }
 
-.view-toggle-btn,
-.icon-btn,
-.minimap-btn,
-.refresh-btn,
 .git-collapse-btn {
   width: 28px;
   height: 28px;
@@ -146,10 +117,6 @@ button {
   flex: 0 0 auto;
 }
 
-.view-toggle-btn:hover,
-.icon-btn:hover,
-.minimap-btn:hover,
-.refresh-btn:hover,
 .git-collapse-btn:hover,
 .git-filter-btn:hover,
 .git-search-clear:hover,
@@ -158,21 +125,9 @@ button {
   color: var(--cg-text);
 }
 
-.view-toggle-btn.active,
-.icon-btn.active,
-.minimap-btn.active,
 .git-filter-btn.active {
   background: var(--cg-surface-active);
   color: var(--cg-text);
-}
-
-.view-toggle-btn:disabled,
-.icon-btn:disabled,
-.minimap-btn:disabled,
-.refresh-btn:disabled,
-.git-collapse-btn:disabled {
-  opacity: .42;
-  cursor: default;
 }
 
 .toolbar-icon {
@@ -186,15 +141,6 @@ html[data-cg-theme="dark"] .git-toolbar img,
 html[data-cg-theme="dark"] .react-flow__controls-button svg,
 html[data-cg-theme="dark"] .git-tree-empty-icon {
   filter: invert(1);
-}
-
-.spinning {
-  display: inline-flex;
-  animation: cg-spin .8s linear infinite;
-}
-
-@keyframes cg-spin {
-  to { transform: rotate(360deg); }
 }
 
 /* Graph canvas */
@@ -281,37 +227,6 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
   stroke: transparent !important;
 }
 
-.cg-minimap-draggable {
-  user-select: none;
-}
-
-.cg-minimap-draggable::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 18px;
-  background: linear-gradient(to bottom, color-mix(in srgb, var(--cg-text) 10%, transparent), transparent);
-  pointer-events: none;
-}
-
-.cg-minimap-draggable::after {
-  content: '⋮⋮';
-  position: absolute;
-  top: 2px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: var(--cg-text-tertiary);
-  font-size: 11px;
-  letter-spacing: 2px;
-  line-height: 1;
-  pointer-events: none;
-}
-
-.cg-minimap-draggable:hover { cursor: grab; }
-.cg-minimap-dragging { cursor: grabbing !important; }
-
 /* Graph nodes */
 .qa-node,
 .qa-node.question,
@@ -332,8 +247,7 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
   transition: background-color var(--cg-transition), border-color var(--cg-transition), box-shadow var(--cg-transition);
 }
 
-.qa-node:hover,
-.qa-node.hovered {
+.qa-node:hover {
   background: var(--cg-surface-hover);
   border-color: var(--cg-border);
 }
@@ -455,10 +369,6 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
   background: var(--cg-surface-strong);
   color: var(--cg-text);
   opacity: 1;
-}
-
-.qa-node-expand-answer-btn.expanded {
-  background: var(--cg-surface-active);
 }
 
 .qa-node-content {
@@ -680,10 +590,6 @@ html[data-cg-theme="dark"] .git-tree-empty-icon {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.git-toolbar-row1 {
-  justify-content: space-between;
 }
 
 .git-toolbar-row2 {
