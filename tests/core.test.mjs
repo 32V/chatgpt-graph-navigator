@@ -4,7 +4,7 @@ import test from 'node:test';
 import { ASSISTANT_STREAM_OUTPUT_MODES } from '../src/shared/constants.js';
 import { normalizeAssistantStreamNodes } from '../src/content/parser/assistant-stream-normalizer.js';
 import { resolveCurrentNodeId } from '../src/content/parser/current-node.js';
-import { buildPathToTarget, getSiblings } from '../src/content/utils/branch-navigator.js';
+import { buildPathToTarget, getSiblings } from '../src/content/utils/branch-model.js';
 import {
   buildQATree,
   getQATreeStructureKey,
