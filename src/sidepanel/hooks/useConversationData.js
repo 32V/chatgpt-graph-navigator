@@ -65,7 +65,9 @@ export function useConversationData() {
 
     try {
       const result = await requestHostCommand('refresh', { conversationId });
-      if (result?.success === false) throw new Error('Canonical refresh failed');
+      if (result?.success === false) {
+        throw new Error(result.error || 'Canonical refresh failed');
+      }
     } catch (refreshError) {
       clearPendingRefresh(conversationId);
       throw refreshError;
@@ -113,7 +115,7 @@ export function useConversationData() {
       }
 
       setConversationData(null);
-      if (requestIfMissing) void triggerContentRefresh(conversationId);
+      if (requestIfMissing) await triggerContentRefresh(conversationId);
     } catch (fetchError) {
       if (activeConversationRef.current !== conversationId) return;
       console.error('[Panel] Failed to fetch conversation:', fetchError);
@@ -144,8 +146,21 @@ export function useConversationData() {
 
   const refreshData = useCallback(async () => {
     const conversationId = activeConversationRef.current;
-    if (!conversationId) return;
-    await triggerContentRefresh(conversationId);
+    if (!conversationId) return false;
+
+    setError(null);
+    setIsLoading(true);
+    try {
+      await triggerContentRefresh(conversationId);
+      return true;
+    } catch (refreshError) {
+      if (activeConversationRef.current === conversationId) {
+        setError(refreshError.message || 'Failed to refresh conversation data');
+      }
+      return false;
+    } finally {
+      if (activeConversationRef.current === conversationId) setIsLoading(false);
+    }
   }, [triggerContentRefresh]);
 
   useEffect(() => {
