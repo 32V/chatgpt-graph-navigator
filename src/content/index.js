@@ -117,7 +117,7 @@ async function refreshConversation(requestedConversationId) {
   const tokenLoaded = await loadToken();
   if (!tokenLoaded || !hasToken()) throw new Error('No valid token configured');
 
-  return Boolean(await fetchAndProcessConversation(conversationId));
+  return Boolean(await fetchAndProcessConversation(conversationId, { propagateError: true }));
 }
 
 async function scrollToMessage(messageId) {
@@ -482,7 +482,9 @@ async function waitForPageReady() {
   if (!mainElement) throw new Error('Page load timeout');
 }
 
-async function fetchAndProcessConversation(conversationId) {
+async function fetchAndProcessConversation(conversationId, options = {}) {
+  const { propagateError = false } = options;
+
   try {
     const data = await fetchConversationWithRetry(conversationId);
     if (!data?.mapping) throw new Error('Invalid conversation data');
@@ -527,6 +529,7 @@ async function fetchAndProcessConversation(conversationId) {
         stack: error.stack
       });
     } catch {}
+    if (propagateError) throw error;
     return null;
   }
 }
