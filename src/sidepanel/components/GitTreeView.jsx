@@ -139,6 +139,7 @@ export default function GitTreeView({
 }) {
   const containerRef = useRef(null);
   const conversationRef = useRef(null);
+  const selectionRef = useRef('');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [displayMode, setDisplayModeState] = useState('all');
@@ -185,6 +186,10 @@ export default function GitTreeView({
 
   const query = useMemo(() => normalizeText(searchQuery).toLowerCase(), [searchQuery]);
   const structureKey = useMemo(() => getQATreeStructureKey(qaTree), [qaTree]);
+  const selectionKey = useMemo(
+    () => Array.from(selectedPath || []).sort().join('|'),
+    [selectedPath]
+  );
   const searchIndex = useMemo(
     () => buildSearchIndex(qaTree, displayMode),
     [qaTree, displayMode]
@@ -204,26 +209,34 @@ export default function GitTreeView({
   useEffect(() => {
     if (!qaTree) {
       conversationRef.current = conversationId || null;
+      selectionRef.current = '';
       setExpanded(previous => previous.size === 0 ? previous : new Set());
       return;
     }
 
     const conversationChanged = conversationRef.current !== conversationId;
+    const selectionChanged = selectionRef.current !== selectionKey;
     conversationRef.current = conversationId;
+    selectionRef.current = selectionKey;
 
     setExpanded((previous) => {
       const next = conversationChanged
         ? initialExpandedNodes(qaTree)
         : new Set(previous);
 
-      selectedPath?.forEach(id => next.add(id));
+      // Reveal the canonical path only when the active branch actually changes.
+      // A routine snapshot refresh must not undo a user's manual collapse.
+      if (conversationChanged || selectionChanged) {
+        selectedPath?.forEach(id => next.add(id));
+      }
+
       for (const id of Array.from(next)) {
         if (!qaTree.qNodeMap?.has(id) && !qaTree.aNodeMap?.has(id)) next.delete(id);
       }
 
       return sameSet(previous, next) ? previous : next;
     });
-  }, [conversationId, qaTree, selectedPath, structureKey]);
+  }, [conversationId, selectionKey, structureKey]);
 
   useEffect(() => {
     if (!query || !keepSet) return;
