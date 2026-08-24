@@ -19,6 +19,19 @@ function transactionDone(transaction) {
   });
 }
 
+function deleteConversationRecords(store, conversationId, onComplete) {
+  const request = store.index('conversationId').openCursor(IDBKeyRange.only(conversationId));
+  request.onsuccess = (event) => {
+    const cursor = event.target.result;
+    if (!cursor) {
+      onComplete();
+      return;
+    }
+    cursor.delete();
+    cursor.continue();
+  };
+}
+
 export class Database {
   constructor() {
     this.db = null;
@@ -99,56 +112,10 @@ export class Database {
     });
   }
 
-  async saveConversation(conversation) {
-    const db = await this.open();
-    const tx = db.transaction('conversations', 'readwrite');
-    tx.objectStore('conversations').put(conversation);
-    await transactionDone(tx);
-  }
-
   async getConversation(id) {
     const db = await this.open();
     const tx = db.transaction('conversations', 'readonly');
     return (await requestResult(tx.objectStore('conversations').get(id))) || null;
-  }
-
-  async _deleteStoreRecords(storeName, conversationId) {
-    const db = await this.open();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      const request = store.index('conversationId').openCursor(IDBKeyRange.only(conversationId));
-
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || new Error('IndexedDB delete transaction aborted'));
-      request.onerror = () => reject(request.error);
-      request.onsuccess = (event) => {
-        const cursor = event.target.result;
-        if (!cursor) return;
-        cursor.delete();
-        cursor.continue();
-      };
-    });
-  }
-
-  async _replaceStoreRecords(storeName, conversationId, items) {
-    await this._deleteStoreRecords(storeName, conversationId);
-    if (!items?.length) return;
-
-    const db = await this.open();
-    const tx = db.transaction(storeName, 'readwrite');
-    const store = tx.objectStore(storeName);
-    for (const item of items) store.put(item);
-    await transactionDone(tx);
-  }
-
-  saveNodes(conversationId, nodes) {
-    return this._replaceStoreRecords('nodes', conversationId, nodes);
-  }
-
-  saveEdges(conversationId, edges) {
-    return this._replaceStoreRecords('edges', conversationId, edges);
   }
 
   async getNodes(conversationId) {
@@ -167,25 +134,37 @@ export class Database {
   }
 
   async saveFullConversation(conversationData) {
+    const db = await this.open();
     const conversationId = conversationData.id;
+    const tx = db.transaction(['conversations', 'nodes', 'edges'], 'readwrite');
+    const conversationStore = tx.objectStore('conversations');
+    const nodeStore = tx.objectStore('nodes');
+    const edgeStore = tx.objectStore('edges');
 
-    // Write the graph payload before publishing its metadata record. Readers may
-    // briefly see the previous complete snapshot, but never a new currentNodeId
-    // paired with the previous node/edge payload.
-    await Promise.all([
-      this.saveNodes(conversationId, conversationData.nodes || []),
-      this.saveEdges(conversationId, conversationData.edges || [])
-    ]);
+    let clearedStores = 0;
+    const publishSnapshot = () => {
+      clearedStores += 1;
+      if (clearedStores !== 2) return;
 
-    await this.saveConversation({
-      id: conversationId,
-      title: conversationData.title,
-      createTime: conversationData.createTime,
-      updateTime: conversationData.updateTime,
-      currentNodeId: conversationData.currentNodeId || null,
-      nodeCount: conversationData.nodes?.length || 0,
-      edgeCount: conversationData.edges?.length || 0
-    });
+      for (const node of conversationData.nodes || []) nodeStore.put(node);
+      for (const edge of conversationData.edges || []) edgeStore.put(edge);
+      conversationStore.put({
+        id: conversationId,
+        title: conversationData.title,
+        createTime: conversationData.createTime,
+        updateTime: conversationData.updateTime,
+        currentNodeId: conversationData.currentNodeId || null,
+        nodeCount: conversationData.nodes?.length || 0,
+        edgeCount: conversationData.edges?.length || 0
+      });
+    };
+
+    // Cursor requests keep the transaction active. Once both old payload stores
+    // are cleared, queue the complete replacement snapshot synchronously in the
+    // same transaction so readers can observe only the old or the new version.
+    deleteConversationRecords(nodeStore, conversationId, publishSnapshot);
+    deleteConversationRecords(edgeStore, conversationId, publishSnapshot);
+    await transactionDone(tx);
   }
 
   close() {
