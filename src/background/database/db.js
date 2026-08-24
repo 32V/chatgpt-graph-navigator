@@ -32,6 +32,33 @@ function deleteConversationRecords(store, conversationId, onComplete) {
   };
 }
 
+function validateDatabaseSchema(database) {
+  for (const [storeName, config] of Object.entries(OBJECT_STORES)) {
+    if (!database.objectStoreNames.contains(storeName)) {
+      throw new Error(`Schema mismatch: missing object store ${storeName}`);
+    }
+
+    const tx = database.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
+    if (store.keyPath !== config.keyPath) {
+      throw new Error(
+        `Schema mismatch: ${storeName} keyPath is ${String(store.keyPath)}, expected ${config.keyPath}`
+      );
+    }
+
+    for (const indexConfig of config.indexes || []) {
+      if (!store.indexNames.contains(indexConfig.name)) {
+        throw new Error(`Schema mismatch: ${storeName} is missing index ${indexConfig.name}`);
+      }
+
+      const index = store.index(indexConfig.name);
+      if (index.keyPath !== indexConfig.keyPath || index.unique !== indexConfig.unique) {
+        throw new Error(`Schema mismatch: ${storeName}.${indexConfig.name} has incompatible definition`);
+      }
+    }
+  }
+}
+
 export class Database {
   constructor() {
     this.db = null;
@@ -63,6 +90,7 @@ export class Database {
   _shouldResetDatabase(error) {
     const message = error?.message || '';
     return (
+      message.includes('Schema mismatch') ||
       message.includes('Missing object stores') ||
       error?.name === 'VersionError' ||
       error?.name === 'InvalidStateError' ||
@@ -84,13 +112,13 @@ export class Database {
 
       request.onsuccess = () => {
         this.db = request.result;
-        const missingStores = Object.keys(OBJECT_STORES)
-          .filter(storeName => !this.db.objectStoreNames.contains(storeName));
 
-        if (missingStores.length > 0) {
+        try {
+          validateDatabaseSchema(this.db);
+        } catch (error) {
           this.db.close();
           this.db = null;
-          reject(new Error(`Missing object stores: ${missingStores.join(', ')}`));
+          reject(error);
           return;
         }
 
