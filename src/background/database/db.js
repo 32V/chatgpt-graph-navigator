@@ -112,31 +112,35 @@ export class Database {
     });
   }
 
-  async getConversation(id) {
+  async getFullConversation(conversationId) {
     const db = await this.open();
-    const tx = db.transaction('conversations', 'readonly');
-    return (await requestResult(tx.objectStore('conversations').get(id))) || null;
-  }
+    const tx = db.transaction(['conversations', 'nodes', 'edges'], 'readonly');
+    const done = transactionDone(tx);
 
-  async getNodes(conversationId) {
-    const db = await this.open();
-    const tx = db.transaction('nodes', 'readonly');
-    const index = tx.objectStore('nodes').index('conversationId');
-    return (await requestResult(index.getAll(conversationId))) || [];
-  }
+    const conversationRequest = tx.objectStore('conversations').get(conversationId);
+    const nodeRequest = tx.objectStore('nodes').index('conversationId').getAll(conversationId);
+    const edgeRequest = tx.objectStore('edges').index('conversationId').getAll(conversationId);
 
-  async getEdges(conversationId) {
-    const db = await this.open();
-    const tx = db.transaction('edges', 'readonly');
-    const index = tx.objectStore('edges').index('conversationId');
-    const edges = (await requestResult(index.getAll(conversationId))) || [];
-    return edges.sort((a, b) => (a.orderKey || 0) - (b.orderKey || 0));
+    const [conversation, nodes, edges] = await Promise.all([
+      requestResult(conversationRequest),
+      requestResult(nodeRequest),
+      requestResult(edgeRequest)
+    ]);
+    await done;
+
+    if (!conversation) return null;
+    return {
+      conversation,
+      nodes: nodes || [],
+      edges: (edges || []).sort((a, b) => (a.orderKey || 0) - (b.orderKey || 0))
+    };
   }
 
   async saveFullConversation(conversationData) {
     const db = await this.open();
     const conversationId = conversationData.id;
     const tx = db.transaction(['conversations', 'nodes', 'edges'], 'readwrite');
+    const done = transactionDone(tx);
     const conversationStore = tx.objectStore('conversations');
     const nodeStore = tx.objectStore('nodes');
     const edgeStore = tx.objectStore('edges');
@@ -164,7 +168,7 @@ export class Database {
     // same transaction so readers can observe only the old or the new version.
     deleteConversationRecords(nodeStore, conversationId, publishSnapshot);
     deleteConversationRecords(edgeStore, conversationId, publishSnapshot);
-    await transactionDone(tx);
+    await done;
   }
 
   close() {
