@@ -75,7 +75,8 @@ function QANode({ data, selected }) {
   } = data;
 
   const isQuestion = nodeType === 'question';
-  const normalizedContent = (content || '').replace(/\s+/g, ' ').trim();
+  const rawContent = String(content || '').trim();
+  const normalizedContent = rawContent.replace(/\s+/g, ' ');
   const stopEvent = useCallback(event => event.stopPropagation(), []);
 
   const toggleDetails = useCallback((event) => {
@@ -204,7 +205,7 @@ function QANode({ data, selected }) {
           onPointerDown={stopEvent}
           onWheel={stopEvent}
         >
-          {normalizedContent || 'Empty message'}
+          {rawContent || 'Empty message'}
         </div>
       )}
 
