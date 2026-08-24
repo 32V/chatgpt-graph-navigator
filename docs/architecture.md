@@ -63,7 +63,21 @@ DOM-dependent behavior is limited to operations that necessarily control ChatGPT
 
 This logic lives primarily in `utils/branch-navigator.js` and `utils/message-id-helper.js`.
 
-The embedded panel sends navigation messages directly to the content script in its host ChatGPT tab. The service worker does not proxy node navigation, which avoids accidental routing through whichever browser tab happens to be active.
+## Embedded host bridge
+
+The React iframe does not guess which browser tab owns it. The dock host already runs inside the correct ChatGPT tab, so it explicitly supplies the current conversation identity and relays refresh/navigation commands.
+
+```text
+React iframe
+    ↓ postMessage
+right-dock content script
+    ↓ runtime message (sender.tab is authoritative)
+service worker
+    ↓ tabs.sendMessage to that same tab
+content integration
+```
+
+The bridge validates both the iframe origin and the host ChatGPT URL. A command also carries the expected conversation ID; the service worker rejects it if the host tab has already navigated elsewhere. This removes active-tab polling and prevents cross-tab races.
 
 ## Edited-message compatibility adapter
 
@@ -75,7 +89,7 @@ It is kept separate from the main content bundle so this invasive compatibility 
 
 ChatGPT is an SPA. The content script starts a route observer even when the initial page is not a conversation. Entering `/c/<id>` activates canonical synchronization; leaving a conversation route tears down message observation and in-memory graph state.
 
-A generation counter prevents an old asynchronous fetch from committing after the user has already switched conversations. The embedded panel likewise binds its reads and navigation requests to its host ChatGPT tab and rejects stale asynchronous results after a route change.
+A generation counter prevents an old asynchronous fetch from committing after the user has already switched conversations. The dock uses the same route-observer abstraction to update the iframe host context or remove the panel outside conversation routes.
 
 ## Canonical synchronization
 
@@ -136,7 +150,9 @@ The right dock hosts `src/sidepanel/index.html` in an extension iframe. The Reac
 - **Graph view** using React Flow;
 - **Timeline tree** for compact branch browsing, search, and filtering.
 
-A node click updates the panel selection immediately and asks the content script in the same host tab to navigate ChatGPT. The next canonical snapshot reconciles that optimistic selection with ChatGPT's actual `current_node`. Native ChatGPT version switching is likewise reflected after the observer triggers a canonical refresh.
+A node click updates the panel selection optimistically and sends a host-bound navigation command. The next canonical snapshot reconciles that selection with ChatGPT's actual `current_node`. If actuation fails, the panel requests a canonical refresh immediately instead of leaving stale optimistic state behind.
+
+The QA tree exposes a semantic structure key derived from ordered roots and parent/child relationships. Recreated Map/object instances from an unchanged canonical snapshot therefore do not look like a new tree. The timeline keeps manual expansion state across ordinary refreshes, resets it when the conversation changes, and uses ancestry guards rather than an arbitrary maximum-depth cutoff.
 
 ## Stable graph geometry
 
@@ -145,25 +161,22 @@ Single-answer assistant responses are collapsed by default. The visual layout is
 1. Dagre computes a base layout without hidden single-answer nodes.
 2. When one is revealed, its compact node is inserted into reserved space between existing ranks.
 
-Existing node coordinates therefore do not change during answer reveal/hide. Graph cards also keep fixed dimensions matching the Dagre constants; full-message text opens in an overlay rather than resizing a node. `scripts/test-qa-tree-layout.mjs` enforces the answer-reveal coordinate invariant.
+Existing node coordinates therefore do not change during answer reveal/hide. Graph cards also keep fixed dimensions matching the Dagre constants; full-message text opens in a focusable, dismissible overlay rather than resizing a node.
 
 ## Dock and theme integration
 
 `ui/docked-panel.js` owns behavior for the automatic right-hand dock, while `ui/docked-panel.css` owns its host-page presentation. The dock occupies page layout space, is resizable/collapsible, and forwards ChatGPT's effective foreground/background colors to the iframe. The panel uses one token-based stylesheet for its graph and timeline views.
 
-## Build and regression checks
+## Validation architecture
 
-`build.js` bundles runtime JS/CSS with esbuild. Release builds use esbuild's `pure` setting to remove nonessential `console.log/debug/info` calls without source-code regex rewriting.
+The repository keeps validation intentionally small and explicit:
 
-CI runs:
+- `tests/core.test.mjs` — canonical graph model, branch grouping, stream normalization, semantic tree identity, and stable graph layout;
+- `tests/compat.test.mjs` — the isolated edited-message compatibility adapter;
+- `scripts/check-no-chinese.mjs` — repository language policy;
+- `scripts/verify-release.mjs` — release-package contract.
 
-1. English-only source/documentation check;
-2. edited-message compatibility test;
-3. canonical `current_node` resolution/selected-path test;
-4. normalized QA-tree model test;
-5. assistant-stream normalization test;
-6. stable graph-layout test;
-7. production release build and package verification.
+Tests use Node's built-in test runner; no test-framework dependency is carried by the extension. `npm run validate` is the single authoritative entry point and runs policy checks, tests, the release build, and package verification. GitHub Actions invokes that command rather than duplicating test logic in workflow YAML.
 
 ## Compatibility boundaries
 
