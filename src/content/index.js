@@ -105,17 +105,6 @@ function setupMessageListener() {
       return true;
     }
 
-    if (message.type === MESSAGE_TYPES.ASSISTANT_STREAM_SETTINGS_CHANGED) {
-      loadAssistantStreamSettings()
-        .then(() => {
-          const conversationId = extractConversationId();
-          return conversationId ? fetchAndProcessConversation(conversationId) : null;
-        })
-        .then(() => sendResponse({ success: true }))
-        .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
-      return true;
-    }
-
     return false;
   });
 }
@@ -123,6 +112,7 @@ function setupMessageListener() {
 async function refreshConversation(requestedConversationId) {
   const conversationId = requestedConversationId || extractConversationId();
   if (!conversationId) throw new Error('No conversationId');
+  if (conversationId !== extractConversationId()) throw new Error('Conversation route changed');
 
   const tokenLoaded = await loadToken();
   if (!tokenLoaded || !hasToken()) throw new Error('No valid token configured');
@@ -206,17 +196,19 @@ function waitForScrollToStop(container, timeout = 1500) {
 function waitForDOMChangeOrTimeout(container, maxWait) {
   return new Promise((resolve) => {
     let resolved = false;
+    let timer = null;
     const observer = new MutationObserver(cleanup);
 
     function cleanup() {
       if (resolved) return;
       resolved = true;
       observer.disconnect();
+      if (timer) clearTimeout(timer);
       resolve();
     }
 
     observer.observe(container, { childList: true, subtree: true });
-    setTimeout(cleanup, maxWait);
+    timer = setTimeout(cleanup, maxWait);
   });
 }
 
