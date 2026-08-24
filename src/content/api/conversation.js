@@ -26,9 +26,9 @@ async function fetchConversation(conversationId, isAuthRetry = false) {
 
   if (response.status === 401) {
     if (!isAuthRetry) {
-      await delay(500);
-      await loadToken();
-      return fetchConversation(conversationId, true);
+      await delay(250);
+      const refreshed = await loadToken({ forceRefresh: true });
+      if (refreshed) return fetchConversation(conversationId, true);
     }
     throw new Error('Authentication failed (401). Sign in to ChatGPT and refresh the page.');
   }
