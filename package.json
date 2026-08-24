@@ -1,15 +1,19 @@
 {
   "name": "chatgpt-graph-extension",
   "version": "0.6.0",
-  "description": "Visualize ChatGPT conversations as navigable knowledge graphs in a Chrome extension.",
+  "description": "A native-feeling conversation tree and branch navigator for ChatGPT.",
   "type": "module",
   "scripts": {
     "build": "node build.js",
     "build:watch": "node build.js --watch",
     "build:release": "node build.js --release",
     "release": "node scripts/release.js",
+    "verify:release": "node scripts/verify-release.mjs",
+    "check": "node scripts/check-no-chinese.mjs",
+    "test": "node --test",
+    "validate": "npm run check && npm test && npm run release && npm run verify:release",
     "dev": "npm run build:watch",
-    "format": "prettier --write \"src/**/*.{js,jsx,json,css,html}\""
+    "format": "prettier --write \"src/**/*.{js,jsx,css,html}\" \"scripts/**/*.mjs\" \"tests/**/*.mjs\" \"docs/**/*.md\" README.md PRIVACY.md manifest.json package.json"
   },
   "keywords": [
     "chatgpt",
