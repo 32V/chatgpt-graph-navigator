@@ -39,6 +39,12 @@ Never derive canonical parent/child edges from DOM adjacency. ChatGPT virtualize
 
 The backend `current_node` is the canonical selected leaf. If parser or assistant-stream normalization removes that raw node, resolve it to the corresponding normalized graph node instead of guessing the active path from mounted DOM turns.
 
+### Separate branch structure from branch actuation
+
+Pure branch structure belongs in `content/utils/branch-model.js`. It may consume normalized canonical nodes but must not touch the DOM. `branch-navigator.js` is the actuator: it mounts virtualized turns, discovers ChatGPT's native controls, clicks them, and verifies observed message IDs.
+
+This separation keeps the stable model cheap to test without introducing a browser test framework for implementation details of a private web application.
+
 ### DOM coupling belongs in adapters
 
 DOM-dependent code should be limited to:
@@ -54,6 +60,10 @@ Graph construction, persistence, and selected-path computation should remain ind
 
 The embedded iframe must not infer ownership from the globally active browser tab. `docked-panel.js` supplies host conversation context and relays iframe commands through the service worker, where `sender.tab` identifies the authoritative ChatGPT tab. Keep stale-conversation validation on this bridge.
 
+### Preserve canonical snapshot atomicity
+
+A persisted graph snapshot is one logical unit: conversation metadata, nodes, and edges. Reads and writes should keep those three stores in one IndexedDB transaction so the panel never combines generations.
+
 ### Preserve tree interaction state
 
 Canonical refreshes recreate arrays and Maps even when topology is unchanged. UI state must therefore use semantic topology identity, not JavaScript object identity. `getQATreeStructureKey()` is the shared structural signature for Graph and Tree views. Timeline recursion should use ancestry/cycle guards rather than arbitrary depth truncation.
@@ -68,7 +78,7 @@ Revealing a collapsed single assistant response must not move existing graph nod
 src/
 ├── background/
 │   ├── auth/                 # ChatGPT bearer-token capture
-│   ├── database/             # conversations/nodes/edges IndexedDB stores
+│   ├── database/             # atomic conversations/nodes/edges snapshots
 │   ├── messaging/            # runtime routing and host-tab relay
 │   └── index.js              # MV3 service worker
 │
@@ -79,7 +89,7 @@ src/
 │   ├── parser/               # mapping, stream, and current-node normalization
 │   ├── state/                # minimal in-page canonical state
 │   ├── ui/                   # automatic right-dock host
-│   ├── utils/                # branch navigation and DOM helpers
+│   ├── utils/                # pure branch model + DOM navigation adapters
 │   └── index.js              # content integration
 │
 ├── popup/                    # settings popup
@@ -96,7 +106,7 @@ tests/
 
 The repository intentionally keeps a small test surface instead of accumulating one script per bug. Tests use Node's built-in `node:test` runner and are grouped by architectural boundary:
 
-- **core** — canonical graph model, current-node resolution, branch grouping, stream normalization, semantic tree identity, and stable layout;
+- **core** — canonical graph model, current-node resolution, pure branch grouping/path logic, stream normalization, semantic tree identity, and stable layout;
 - **compat** — the early edited-message experiment adapter.
 
 Static/release contracts are separate from behavioral tests:
@@ -105,7 +115,7 @@ Static/release contracts are separate from behavioral tests:
 - `npm run verify:release` verifies the packaged extension contract;
 - `npm run validate` is the one authoritative local/CI entry point.
 
-When adding a regression, extend the existing boundary test unless a genuinely new runtime boundary appears. Avoid creating a new test file for each individual bug.
+When adding a regression, extend the existing boundary test unless a genuinely new runtime boundary appears. Avoid creating a new test file for each individual bug, and do not add a browser-test framework merely to mirror volatile ChatGPT DOM details.
 
 ## Debugging
 
@@ -135,7 +145,7 @@ Check whether the mounted turn's message ID changed and whether the next backend
 
 Separate topology from actuation:
 
-1. verify that nodes/edges contain the correct target path;
+1. verify that `branch-model.js` derives the correct canonical target path/sibling group;
 2. verify that `branch-navigator.js` can mount the divergence turn and operate ChatGPT's native version controls;
 3. verify that the dock host command still targets the same conversation ID.
 
