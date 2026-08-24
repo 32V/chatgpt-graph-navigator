@@ -34,8 +34,6 @@ const FILES_TO_INCLUDE = [
   'assets'
 ];
 
-const EXCLUDE_FILES = new Set(['icon1024.png']);
-
 async function main() {
   console.log(`\nBuilding release v${VERSION}...\n`);
 
@@ -66,7 +64,6 @@ function copyRecursive(src, dest) {
   if (stat.isDirectory()) {
     mkdirSync(dest, { recursive: true });
     for (const child of readdirSync(src)) {
-      if (EXCLUDE_FILES.has(child)) continue;
       copyRecursive(join(src, child), join(dest, child));
     }
     return;
