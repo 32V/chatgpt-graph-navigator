@@ -9,6 +9,8 @@ import { clearToken } from '../auth/token-capture.js';
 
 const CHATGPT_URL_RE = /^https:\/\/(?:chatgpt\.com|chat\.openai\.com)\//i;
 const CONVERSATION_ID_RE = /\/c\/([a-f0-9-]+)/i;
+const CONTENT_ERROR_TTL_MS = 10000;
+const recentContentErrors = new Map();
 
 export function setupMessageListener() {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -36,13 +38,32 @@ function handleMessage(message, sender) {
     case MESSAGE_TYPES.DOCK_HOST_COMMAND:
       return handleDockHostCommand(payload, sender);
     case MESSAGE_TYPES.ERROR:
-      console.error('[Background] Error from content script:', payload, sender);
-      return Promise.resolve({ acknowledged: true });
+      return handleContentError(payload, sender);
     case MESSAGE_TYPES.CLEAR_TOKEN:
       return clearToken().then(success => ({ success }));
     default:
       return null;
   }
+}
+
+function handleContentError(payload, sender) {
+  const tabId = sender?.tab?.id;
+  const message = payload?.message || 'Unknown content-script error';
+  if (tabId) {
+    recentContentErrors.set(tabId, {
+      message,
+      stack: payload?.stack || '',
+      timestamp: Date.now()
+    });
+  }
+
+  console.error(
+    '[Background] Error from content script:',
+    message,
+    payload?.stack || '',
+    tabId ? `(tab ${tabId})` : ''
+  );
+  return Promise.resolve({ acknowledged: true });
 }
 
 async function handleConversationLoaded(conversationData) {
@@ -87,7 +108,20 @@ async function handleDockHostCommand(payload, sender) {
     throw new Error(`Unsupported dock command: ${payload?.command || '(none)'}`);
   }
 
-  return sendMessageToTabWithFallback(tabId, message, { retryDelayMs: 500 });
+  const result = await sendMessageToTabWithFallback(tabId, message, { retryDelayMs: 500 });
+
+  if (payload?.command === 'refresh') {
+    if (result?.success !== false) {
+      recentContentErrors.delete(tabId);
+    } else if (!result.error) {
+      const recentError = recentContentErrors.get(tabId);
+      if (recentError && Date.now() - recentError.timestamp <= CONTENT_ERROR_TTL_MS) {
+        return { ...result, error: recentError.message };
+      }
+    }
+  }
+
+  return result;
 }
 
 async function notifyPanel(type, payload) {
