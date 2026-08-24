@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getQATreeStructureKey } from '../utils/qa-tree.js';
 
 const iconUrl = (name) => chrome.runtime.getURL(`assets/${name}`);
 const PREVIEW_LIMIT = 110;
-const MAX_DEPTH = 80;
 
 function normalizeText(text) {
   return (text || '').replace(/\s+/g, ' ').trim();
@@ -47,14 +47,10 @@ function buildSearchIndex(qaTree, displayMode) {
 
   const items = [];
   if (displayMode !== 'a') {
-    qaTree.qNodeMap?.forEach((node) => {
-      items.push({ id: node.userId, text: node.content || '' });
-    });
+    qaTree.qNodeMap?.forEach(node => items.push({ id: node.userId, text: node.content || '' }));
   }
   if (displayMode !== 'q') {
-    qaTree.aNodeMap?.forEach((node) => {
-      items.push({ id: node.assistantId, text: node.content || '' });
-    });
+    qaTree.aNodeMap?.forEach(node => items.push({ id: node.assistantId, text: node.content || '' }));
   }
   return items;
 }
@@ -100,14 +96,49 @@ function getNextAnswersFromAnswer(aNode) {
   );
 }
 
+function initialExpandedNodes(qaTree) {
+  const expanded = new Set();
+
+  qaTree?.root?.questions?.forEach(question => expanded.add(question.userId));
+  qaTree?.qNodeMap?.forEach((question) => {
+    const childInfo = getQChildren(question);
+    if (childInfo.mode === 'answers' ||
+        (childInfo.mode === 'collapsedAnswer' && childInfo.items.length > 0)) {
+      expanded.add(question.userId);
+    }
+  });
+  qaTree?.aNodeMap?.forEach((answer) => {
+    if ((answer.nextQuestions || []).length > 0) expanded.add(answer.assistantId);
+  });
+
+  return expanded;
+}
+
+function sameSet(a, b) {
+  if (a === b) return true;
+  if (a.size !== b.size) return false;
+  for (const value of a) {
+    if (!b.has(value)) return false;
+  }
+  return true;
+}
+
+function extendRenderPath(path, key) {
+  if (path.has(key)) return null;
+  const next = new Set(path);
+  next.add(key);
+  return next;
+}
+
 export default function GitTreeView({
+  conversationId,
   qaTree,
   selectedPath,
   currentNodeId,
   onNodeClick
 }) {
   const containerRef = useRef(null);
-  const initializedStructureRef = useRef(null);
+  const conversationRef = useRef(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [displayMode, setDisplayModeState] = useState('all');
@@ -153,6 +184,7 @@ export default function GitTreeView({
   }, []);
 
   const query = useMemo(() => normalizeText(searchQuery).toLowerCase(), [searchQuery]);
+  const structureKey = useMemo(() => getQATreeStructureKey(qaTree), [qaTree]);
   const searchIndex = useMemo(
     () => buildSearchIndex(qaTree, displayMode),
     [qaTree, displayMode]
@@ -171,44 +203,34 @@ export default function GitTreeView({
 
   useEffect(() => {
     if (!qaTree) {
-      initializedStructureRef.current = null;
-      setExpanded(new Set());
+      conversationRef.current = conversationId || null;
+      setExpanded(previous => previous.size === 0 ? previous : new Set());
       return;
     }
 
-    const isNewStructure = initializedStructureRef.current !== qaTree.parentMap;
-    initializedStructureRef.current = qaTree.parentMap;
+    const conversationChanged = conversationRef.current !== conversationId;
+    conversationRef.current = conversationId;
 
-    setExpanded(previous => {
-      const next = isNewStructure ? new Set() : new Set(previous);
-
-      if (isNewStructure) {
-        qaTree.root?.questions?.forEach(question => next.add(question.userId));
-        qaTree.qNodeMap?.forEach((question) => {
-          const childInfo = getQChildren(question);
-          const hasChildren = childInfo.mode === 'answers' ||
-            (childInfo.mode === 'collapsedAnswer' && childInfo.items.length > 0);
-          if (hasChildren) next.add(question.userId);
-        });
-        qaTree.aNodeMap?.forEach((answer) => {
-          if ((answer.nextQuestions || []).length > 0) next.add(answer.assistantId);
-        });
-      }
+    setExpanded((previous) => {
+      const next = conversationChanged
+        ? initialExpandedNodes(qaTree)
+        : new Set(previous);
 
       selectedPath?.forEach(id => next.add(id));
       for (const id of Array.from(next)) {
         if (!qaTree.qNodeMap?.has(id) && !qaTree.aNodeMap?.has(id)) next.delete(id);
       }
-      return next;
+
+      return sameSet(previous, next) ? previous : next;
     });
-  }, [qaTree, selectedPath]);
+  }, [conversationId, qaTree, selectedPath, structureKey]);
 
   useEffect(() => {
     if (!query || !keepSet) return;
     setExpanded(previous => {
       const next = new Set(previous);
       keepSet.forEach(id => next.add(id));
-      return next;
+      return sameSet(previous, next) ? previous : next;
     });
   }, [query, keepSet]);
 
@@ -293,10 +315,10 @@ export default function GitTreeView({
     );
   }
 
-  function renderAnswerNodeAll(aNode, depth, forceShow = false) {
-    if (depth > MAX_DEPTH) return null;
+  function renderAnswerNodeAll(aNode, ancestry = new Set(), forceShow = false) {
     const id = aNode.assistantId;
-    if (!forceShow && !shouldShow(id)) return null;
+    const path = extendRenderPath(ancestry, `a:${id}`);
+    if (!id || !path || (!forceShow && !shouldShow(id))) return null;
 
     const children = aNode.nextQuestions || [];
     const hasChildren = children.length > 0;
@@ -319,17 +341,17 @@ export default function GitTreeView({
         </div>
         {hasChildren && isExpanded && (
           <ul className={`git-ul ${children.length > 1 ? 'git-ul-branch' : 'git-ul-flat'}`}>
-            {children.map(question => renderQuestionNodeAll(question, depth + 1))}
+            {children.map(question => renderQuestionNodeAll(question, path))}
           </ul>
         )}
       </li>
     );
   }
 
-  function renderQuestionNodeAll(qNode, depth) {
-    if (depth > MAX_DEPTH) return null;
+  function renderQuestionNodeAll(qNode, ancestry = new Set()) {
     const id = qNode.userId;
-    if (!shouldShow(id)) return null;
+    const path = extendRenderPath(ancestry, `q:${id}`);
+    if (!id || !path || !shouldShow(id)) return null;
 
     const childInfo = getQChildren(qNode);
     const hasChildren = childInfo.mode === 'answers' || childInfo.items.length > 0;
@@ -375,18 +397,18 @@ export default function GitTreeView({
         {hasChildren && isExpanded && (
           <ul className={`git-ul ${childInfo.mode === 'answers' || childInfo.items.length > 1 ? 'git-ul-branch' : 'git-ul-flat'}`}>
             {childInfo.mode === 'answers'
-              ? childInfo.items.map(answer => renderAnswerNodeAll(answer, depth + 1, forceShowAnswers))
-              : childInfo.items.map(question => renderQuestionNodeAll(question, depth + 1))}
+              ? childInfo.items.map(answer => renderAnswerNodeAll(answer, path, forceShowAnswers))
+              : childInfo.items.map(question => renderQuestionNodeAll(question, path))}
           </ul>
         )}
       </li>
     );
   }
 
-  function renderQuestionOnly(qNode, depth) {
-    if (depth > MAX_DEPTH) return null;
+  function renderQuestionOnly(qNode, ancestry = new Set()) {
     const id = qNode.userId;
-    if (!shouldShow(id)) return null;
+    const path = extendRenderPath(ancestry, `q:${id}`);
+    if (!id || !path || !shouldShow(id)) return null;
 
     const children = getNextQuestionsFromQuestion(qNode);
     const hasChildren = children.length > 0;
@@ -412,17 +434,17 @@ export default function GitTreeView({
         </div>
         {hasChildren && isExpanded && (
           <ul className={`git-ul ${children.length > 1 ? 'git-ul-branch' : 'git-ul-flat'}`}>
-            {children.map(question => renderQuestionOnly(question, depth + 1))}
+            {children.map(question => renderQuestionOnly(question, path))}
           </ul>
         )}
       </li>
     );
   }
 
-  function renderAnswerOnly(aNode, depth) {
-    if (depth > MAX_DEPTH) return null;
+  function renderAnswerOnly(aNode, ancestry = new Set()) {
     const id = aNode.assistantId;
-    if (!id || !shouldShow(id)) return null;
+    const path = extendRenderPath(ancestry, `a:${id}`);
+    if (!id || !path || !shouldShow(id)) return null;
 
     const children = getNextAnswersFromAnswer(aNode);
     const hasChildren = children.length > 0;
@@ -445,7 +467,7 @@ export default function GitTreeView({
         </div>
         {hasChildren && isExpanded && (
           <ul className={`git-ul ${children.length > 1 ? 'git-ul-branch' : 'git-ul-flat'}`}>
-            {children.map(answer => renderAnswerOnly(answer, depth + 1))}
+            {children.map(answer => renderAnswerOnly(answer, path))}
           </ul>
         )}
       </li>
@@ -476,11 +498,11 @@ export default function GitTreeView({
 
   let rootElement = null;
   if (displayMode === 'a' && visibleRootAnswers.length > 0) {
-    rootElement = <ul className="git-ul git-root">{visibleRootAnswers.map(answer => renderAnswerOnly(answer, 0))}</ul>;
+    rootElement = <ul className="git-ul git-root">{visibleRootAnswers.map(answer => renderAnswerOnly(answer))}</ul>;
   } else if (displayMode === 'q' && visibleRootQuestions.length > 0) {
-    rootElement = <ul className="git-ul git-root">{visibleRootQuestions.map(question => renderQuestionOnly(question, 0))}</ul>;
+    rootElement = <ul className="git-ul git-root">{visibleRootQuestions.map(question => renderQuestionOnly(question))}</ul>;
   } else if (displayMode === 'all' && visibleRootQuestions.length > 0) {
-    rootElement = <ul className="git-ul git-root">{visibleRootQuestions.map(question => renderQuestionNodeAll(question, 0))}</ul>;
+    rootElement = <ul className="git-ul git-root">{visibleRootQuestions.map(question => renderQuestionNodeAll(question))}</ul>;
   }
 
   const placeholder = displayMode === 'q'
