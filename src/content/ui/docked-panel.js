@@ -139,11 +139,16 @@ async function runHostCommand(panel, payload) {
   if (!requestId) return;
 
   try {
+    const conversationId = extractConversationId();
+    if (!conversationId || payload?.conversationId !== conversationId) {
+      throw new Error('Dock command targets a stale conversation');
+    }
+
     const response = await chrome.runtime.sendMessage({
       type: MESSAGE_TYPES.DOCK_HOST_COMMAND,
       payload: {
         command: payload.command,
-        conversationId: extractConversationId(),
+        conversationId,
         messageId: payload.messageId || null
       }
     });
@@ -398,7 +403,7 @@ async function createPanel() {
     <div class="cg-dock-body">
       <iframe
         title="Conversation graph"
-        src="${chrome.runtime.getURL(`src/sidepanel/index.html?embedded=1&theme=${initialTheme.mode}`)}"
+        src="${chrome.runtime.getURL(`src/sidepanel/index.html?theme=${initialTheme.mode}`)}"
       ></iframe>
     </div>
   `;
