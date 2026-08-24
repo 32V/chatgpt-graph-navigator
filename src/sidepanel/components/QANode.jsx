@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 
 const PREVIEW_LIMIT = 72;
@@ -58,6 +58,8 @@ function ExpandIcon({ expanded }) {
 
 function QANode({ data, selected }) {
   const [showDetails, setShowDetails] = useState(false);
+  const rootRef = useRef(null);
+  const detailRef = useRef(null);
 
   const {
     nodeType,
@@ -73,7 +75,8 @@ function QANode({ data, selected }) {
   } = data;
 
   const isQuestion = nodeType === 'question';
-  const normalizedContent = (content || '').replace(/\s+/g, ' ').trim();
+  const rawContent = String(content || '').trim();
+  const normalizedContent = rawContent.replace(/\s+/g, ' ');
   const stopEvent = useCallback(event => event.stopPropagation(), []);
 
   const toggleDetails = useCallback((event) => {
@@ -86,9 +89,30 @@ function QANode({ data, selected }) {
     onExpandAnswer?.(nodeId);
   }, [onExpandAnswer, nodeId]);
 
+  useEffect(() => {
+    if (!showDetails) return undefined;
+
+    detailRef.current?.focus({ preventScroll: true });
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setShowDetails(false);
+    };
+    const onPointerDown = (event) => {
+      if (!rootRef.current?.contains(event.target)) setShowDetails(false);
+    };
+
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }, [showDetails]);
+
   if (isInlineExpandedAnswer) {
     return (
       <article
+        ref={rootRef}
         className={`qa-node answer compact-answer ${isSelected ? 'on-path' : ''} ${selected ? 'selected' : ''}`}
         data-node-role="answer"
         aria-current={selected ? 'true' : undefined}
@@ -108,6 +132,7 @@ function QANode({ data, selected }) {
 
   return (
     <article
+      ref={rootRef}
       className={`qa-node ${nodeType} ${isSelected ? 'on-path' : ''} ${selected ? 'selected' : ''}`}
       data-node-role={nodeType}
       aria-current={selected ? 'true' : undefined}
@@ -152,6 +177,7 @@ function QANode({ data, selected }) {
               title={showDetails ? 'Hide full message' : 'Show full message'}
               aria-label={showDetails ? 'Hide full message' : 'Show full message'}
               aria-expanded={showDetails}
+              aria-haspopup="dialog"
               type="button"
             >
               <ExpandIcon expanded={showDetails} />
@@ -168,16 +194,18 @@ function QANode({ data, selected }) {
 
       {showDetails && (
         <div
+          ref={detailRef}
           className="qa-node-detail nodrag nopan nowheel"
           role="dialog"
           aria-label={isQuestion ? 'Full user message' : 'Full ChatGPT message'}
+          tabIndex={-1}
           onClick={stopEvent}
           onDoubleClick={stopEvent}
           onMouseDown={stopEvent}
           onPointerDown={stopEvent}
           onWheel={stopEvent}
         >
-          {normalizedContent || 'Empty message'}
+          {rawContent || 'Empty message'}
         </div>
       )}
 

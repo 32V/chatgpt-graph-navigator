@@ -3,6 +3,7 @@ import ConversationGraph from './components/ConversationGraph';
 import GitTreeView from './components/GitTreeView';
 import { useConversationData } from './hooks/useConversationData';
 import { useQATree } from './hooks/useQATree';
+import { isTrustedHostEvent, postToHost } from './host-messaging.js';
 
 const MINIMAP_VISIBLE_KEY = 'cg:minimap:visible:embedded';
 const VIEW_MODE_KEY = 'sidepanelViewMode';
@@ -41,22 +42,22 @@ function App() {
 
   useEffect(() => {
     chrome.storage.local.set({ [VIEW_MODE_KEY]: viewMode }).catch(() => {});
-    window.parent?.postMessage({ type: 'CG_VIEW_MODE', payload: { mode: viewMode } }, '*');
+    postToHost({ type: 'CG_VIEW_MODE', payload: { mode: viewMode } });
   }, [viewMode]);
 
   useEffect(() => {
     try {
       localStorage.setItem(MINIMAP_VISIBLE_KEY, miniMapVisible ? '1' : '0');
     } catch {}
-    window.parent?.postMessage({
+    postToHost({
       type: 'CG_MINIMAP_STATE',
       payload: { visible: miniMapVisible }
-    }, '*');
+    });
   }, [miniMapVisible]);
 
   useEffect(() => {
     const handler = (event) => {
-      if (event.source !== window.parent) return;
+      if (!isTrustedHostEvent(event)) return;
       const data = event.data;
       if (!data || typeof data !== 'object') return;
 
@@ -66,22 +67,22 @@ function App() {
       } else if (type === 'CG_REFRESH') {
         void refreshData();
       } else if (type === 'CG_REQUEST_VIEW_MODE') {
-        window.parent?.postMessage({
+        postToHost({
           type: 'CG_VIEW_MODE',
           payload: { mode: viewModeRef.current }
-        }, '*');
+        });
       } else if (type === 'CG_TOGGLE_MINIMAP') {
         setMiniMapVisible(value => !value);
       } else if (type === 'CG_REQUEST_MINIMAP_STATE') {
-        window.parent?.postMessage({
+        postToHost({
           type: 'CG_MINIMAP_STATE',
           payload: { visible: miniMapVisibleRef.current }
-        }, '*');
+        });
       }
     };
 
     window.addEventListener('message', handler);
-    window.parent?.postMessage({ type: 'CG_READY' }, '*');
+    postToHost({ type: 'CG_READY' });
 
     return () => window.removeEventListener('message', handler);
   }, [refreshData]);
@@ -101,12 +102,17 @@ function App() {
     setCurrentNodeId(nodeId);
     selectNode(nodeId);
 
-    void navigateToMessage(nodeData?.messageId || nodeId).catch((navigationError) => {
-      console.warn('[Panel] Navigation request failed:', navigationError?.message);
-      // Canonical synchronization will restore the real active path if the
-      // optimistic local selection could not be applied in ChatGPT.
-      void refreshData();
-    });
+    void navigateToMessage(nodeData?.messageId || nodeId)
+      .then((success) => {
+        if (!success) return refreshData();
+        return null;
+      })
+      .catch((navigationError) => {
+        console.warn('[Panel] Navigation request failed:', navigationError?.message);
+        // Canonical synchronization restores the real path if optimistic local
+        // selection could not be applied in ChatGPT.
+        void refreshData();
+      });
   }, [navigateToMessage, refreshData, setCurrentNodeId, selectNode]);
 
   let content;
@@ -141,6 +147,7 @@ function App() {
   } else if (viewMode === 'tree') {
     content = (
       <GitTreeView
+        conversationId={conversationData.id}
         qaTree={tree}
         selectedPath={selectedPath}
         currentNodeId={currentNodeId}

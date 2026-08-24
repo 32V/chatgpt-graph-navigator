@@ -18,9 +18,11 @@ npm ci
 Useful commands:
 
 ```bash
-npm run dev       # watch build
-npm run build     # development build
-npm run release   # production build + release/ + ZIP
+npm run dev        # watch build
+npm run build      # development build
+npm test           # compact Node regression suite
+npm run validate   # policy check + tests + release build + package verification
+npm run release    # production build + release/ + ZIP only
 ```
 
 Load either the project root after `npm run build` or `release/` after `npm run release` from `chrome://extensions` with Developer mode enabled. Reload the extension and refresh existing ChatGPT tabs after rebuilding. The edited-message compatibility adapter runs at `document_start`, so a page refresh is required for changes to that bundle.
@@ -37,6 +39,12 @@ Never derive canonical parent/child edges from DOM adjacency. ChatGPT virtualize
 
 The backend `current_node` is the canonical selected leaf. If parser or assistant-stream normalization removes that raw node, resolve it to the corresponding normalized graph node instead of guessing the active path from mounted DOM turns.
 
+### Separate branch structure from branch actuation
+
+Pure branch structure belongs in `content/utils/branch-model.js`. It may consume normalized canonical nodes but must not touch the DOM. `branch-navigator.js` is the actuator: it mounts virtualized turns, discovers ChatGPT's native controls, clicks them, and verifies observed message IDs.
+
+This separation keeps the stable model cheap to test without introducing a browser test framework for implementation details of a private web application.
+
 ### DOM coupling belongs in adapters
 
 DOM-dependent code should be limited to:
@@ -48,9 +56,21 @@ DOM-dependent code should be limited to:
 
 Graph construction, persistence, and selected-path computation should remain independent of CSS utility classes and sibling order.
 
+### Bind panel actions to the host tab
+
+The embedded iframe must not infer ownership from the globally active browser tab. `docked-panel.js` supplies host conversation context and relays iframe commands through the service worker, where `sender.tab` identifies the authoritative ChatGPT tab. Keep stale-conversation validation on this bridge.
+
+### Preserve canonical snapshot atomicity
+
+A persisted graph snapshot is one logical unit: conversation metadata, nodes, and edges. Reads and writes should keep those three stores in one IndexedDB transaction so the panel never combines generations.
+
+### Preserve tree interaction state
+
+Canonical refreshes recreate arrays and Maps even when topology is unchanged. UI state must therefore use semantic topology identity, not JavaScript object identity. `getQATreeStructureKey()` is the shared structural signature for Graph and Tree views. Timeline recursion should use ancestry/cycle guards rather than arbitrary depth truncation.
+
 ### Preserve graph geometry
 
-Revealing a collapsed single assistant response must not move existing graph nodes. Dagre lays out the base graph first; compact answer nodes are inserted afterward into reserved inter-rank space. Full-message details likewise render as an overlay instead of changing the fixed graph-card dimensions. Update `scripts/test-qa-tree-layout.mjs` if layout behavior changes.
+Revealing a collapsed single assistant response must not move existing graph nodes. Dagre lays out the base graph first; compact answer nodes are inserted afterward into reserved inter-rank space. Full-message details likewise render as an overlay instead of changing the fixed graph-card dimensions.
 
 ## Source layout
 
@@ -58,8 +78,8 @@ Revealing a collapsed single assistant response must not move existing graph nod
 src/
 ├── background/
 │   ├── auth/                 # ChatGPT bearer-token capture
-│   ├── database/             # conversations/nodes/edges IndexedDB stores
-│   ├── messaging/            # runtime routing
+│   ├── database/             # atomic conversations/nodes/edges snapshots
+│   ├── messaging/            # runtime routing and host-tab relay
 │   └── index.js              # MV3 service worker
 │
 ├── content/
@@ -69,37 +89,33 @@ src/
 │   ├── parser/               # mapping, stream, and current-node normalization
 │   ├── state/                # minimal in-page canonical state
 │   ├── ui/                   # automatic right-dock host
-│   ├── utils/                # branch navigation and DOM helpers
+│   ├── utils/                # pure branch model + DOM navigation adapters
 │   └── index.js              # content integration
 │
 ├── popup/                    # settings popup
 ├── setup/                    # optional manual token setup
 ├── shared/                   # cross-context constants/helpers
 └── sidepanel/                # embedded React graph/tree UI
+
+tests/
+├── core.test.mjs             # pure graph/tree/stream/layout invariants
+└── compat.test.mjs           # isolated ChatGPT experiment adapter
 ```
 
-## Regression checks
+## Validation design
 
-Run the same checks as CI:
+The repository intentionally keeps a small test surface instead of accumulating one script per bug. Tests use Node's built-in `node:test` runner and are grouped by architectural boundary:
 
-```bash
-node scripts/check-no-chinese.mjs
-node scripts/test-edit-pagination-compat.mjs
-node scripts/test-current-node.mjs
-node scripts/test-qa-tree-model.mjs
-node scripts/test-assistant-stream-normalizer.mjs
-node scripts/test-qa-tree-layout.mjs
-npm run release
-```
+- **core** — canonical graph model, current-node resolution, pure branch grouping/path logic, stream normalization, semantic tree identity, and stable layout;
+- **compat** — the early edited-message experiment adapter.
 
-The checks cover:
+Static/release contracts are separate from behavioral tests:
 
-- the English-only repository policy;
-- ChatGPT experiment normalization for in-place edited-message pagination;
-- canonical `current_node` resolution and selected-path construction;
-- normalized QA-tree structure and deterministic ordering;
-- assistant-stream grouping, rewiring, and deterministic edges;
-- graph-coordinate stability when revealing a single assistant response.
+- `npm run check` enforces the English-only repository policy;
+- `npm run verify:release` verifies the packaged extension contract;
+- `npm run validate` is the one authoritative local/CI entry point.
+
+When adding a regression, extend the existing boundary test unless a genuinely new runtime boundary appears. Avoid creating a new test file for each individual bug, and do not add a browser-test framework merely to mirror volatile ChatGPT DOM details.
 
 ## Debugging
 
@@ -113,7 +129,7 @@ Open `chrome://extensions`, find ChatGPT Graph Navigator, and inspect its servic
 
 ### Embedded React UI
 
-The right dock contains an extension iframe. Select that execution context in DevTools to inspect React-side state and DOM.
+The right dock contains an extension iframe. Select that execution context in DevTools to inspect React-side state and DOM. Host-context and command messages are exchanged with the dock parent, not with an arbitrary active tab.
 
 ## Common problems
 
@@ -129,8 +145,9 @@ Check whether the mounted turn's message ID changed and whether the next backend
 
 Separate topology from actuation:
 
-1. verify that nodes/edges contain the correct target path;
-2. verify that `branch-navigator.js` can mount the divergence turn and operate ChatGPT's native version controls.
+1. verify that `branch-model.js` derives the correct canonical target path/sibling group;
+2. verify that `branch-navigator.js` can mount the divergence turn and operate ChatGPT's native version controls;
+3. verify that the dock host command still targets the same conversation ID.
 
 Do not modify graph topology to compensate for an actuator failure.
 
@@ -144,18 +161,13 @@ This can happen when the embedded panel initializes before the content script pe
 
 ## Release workflow
 
-GitHub Actions builds a ready-to-load artifact on every branch push:
+GitHub Actions deliberately mirrors the repository entry point instead of restating individual checks:
 
 1. `npm ci`
-2. English-only check
-3. pagination compatibility test
-4. canonical current-node test
-5. QA-tree model test
-6. assistant-stream normalization test
-7. stable layout test
-8. `npm run release`
-9. package verification
-10. artifact upload
+2. `npm run validate`
+3. upload `release/` as the ready-to-load artifact
+
+This keeps test/build policy versioned in ordinary repository code rather than hidden in CI YAML.
 
 ## References
 

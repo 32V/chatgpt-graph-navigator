@@ -19,6 +19,19 @@ function transactionDone(transaction) {
   });
 }
 
+function deleteConversationRecords(store, conversationId, onComplete) {
+  const request = store.index('conversationId').openCursor(IDBKeyRange.only(conversationId));
+  request.onsuccess = (event) => {
+    const cursor = event.target.result;
+    if (!cursor) {
+      onComplete();
+      return;
+    }
+    cursor.delete();
+    cursor.continue();
+  };
+}
+
 export class Database {
   constructor() {
     this.db = null;
@@ -99,93 +112,63 @@ export class Database {
     });
   }
 
-  async saveConversation(conversation) {
+  async getFullConversation(conversationId) {
     const db = await this.open();
-    const tx = db.transaction('conversations', 'readwrite');
-    tx.objectStore('conversations').put(conversation);
-    await transactionDone(tx);
-  }
+    const tx = db.transaction(['conversations', 'nodes', 'edges'], 'readonly');
+    const done = transactionDone(tx);
 
-  async getConversation(id) {
-    const db = await this.open();
-    const tx = db.transaction('conversations', 'readonly');
-    return (await requestResult(tx.objectStore('conversations').get(id))) || null;
-  }
+    const conversationRequest = tx.objectStore('conversations').get(conversationId);
+    const nodeRequest = tx.objectStore('nodes').index('conversationId').getAll(conversationId);
+    const edgeRequest = tx.objectStore('edges').index('conversationId').getAll(conversationId);
 
-  async _deleteStoreRecords(storeName, conversationId) {
-    const db = await this.open();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      const request = store.index('conversationId').openCursor(IDBKeyRange.only(conversationId));
+    const [conversation, nodes, edges] = await Promise.all([
+      requestResult(conversationRequest),
+      requestResult(nodeRequest),
+      requestResult(edgeRequest)
+    ]);
+    await done;
 
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || new Error('IndexedDB delete transaction aborted'));
-      request.onerror = () => reject(request.error);
-      request.onsuccess = (event) => {
-        const cursor = event.target.result;
-        if (!cursor) return;
-        cursor.delete();
-        cursor.continue();
-      };
-    });
-  }
-
-  async _replaceStoreRecords(storeName, conversationId, items) {
-    await this._deleteStoreRecords(storeName, conversationId);
-    if (!items?.length) return;
-
-    const db = await this.open();
-    const tx = db.transaction(storeName, 'readwrite');
-    const store = tx.objectStore(storeName);
-    for (const item of items) store.put(item);
-    await transactionDone(tx);
-  }
-
-  saveNodes(conversationId, nodes) {
-    return this._replaceStoreRecords('nodes', conversationId, nodes);
-  }
-
-  saveEdges(conversationId, edges) {
-    return this._replaceStoreRecords('edges', conversationId, edges);
-  }
-
-  async getNodes(conversationId) {
-    const db = await this.open();
-    const tx = db.transaction('nodes', 'readonly');
-    const index = tx.objectStore('nodes').index('conversationId');
-    return (await requestResult(index.getAll(conversationId))) || [];
-  }
-
-  async getEdges(conversationId) {
-    const db = await this.open();
-    const tx = db.transaction('edges', 'readonly');
-    const index = tx.objectStore('edges').index('conversationId');
-    const edges = (await requestResult(index.getAll(conversationId))) || [];
-    return edges.sort((a, b) => (a.orderKey || 0) - (b.orderKey || 0));
+    if (!conversation) return null;
+    return {
+      conversation,
+      nodes: nodes || [],
+      edges: (edges || []).sort((a, b) => (a.orderKey || 0) - (b.orderKey || 0))
+    };
   }
 
   async saveFullConversation(conversationData) {
+    const db = await this.open();
     const conversationId = conversationData.id;
+    const tx = db.transaction(['conversations', 'nodes', 'edges'], 'readwrite');
+    const done = transactionDone(tx);
+    const conversationStore = tx.objectStore('conversations');
+    const nodeStore = tx.objectStore('nodes');
+    const edgeStore = tx.objectStore('edges');
 
-    // Write the graph payload before publishing its metadata record. Readers may
-    // briefly see the previous complete snapshot, but never a new currentNodeId
-    // paired with the previous node/edge payload.
-    await Promise.all([
-      this.saveNodes(conversationId, conversationData.nodes || []),
-      this.saveEdges(conversationId, conversationData.edges || [])
-    ]);
+    let clearedStores = 0;
+    const publishSnapshot = () => {
+      clearedStores += 1;
+      if (clearedStores !== 2) return;
 
-    await this.saveConversation({
-      id: conversationId,
-      title: conversationData.title,
-      createTime: conversationData.createTime,
-      updateTime: conversationData.updateTime,
-      currentNodeId: conversationData.currentNodeId || null,
-      nodeCount: conversationData.nodes?.length || 0,
-      edgeCount: conversationData.edges?.length || 0
-    });
+      for (const node of conversationData.nodes || []) nodeStore.put(node);
+      for (const edge of conversationData.edges || []) edgeStore.put(edge);
+      conversationStore.put({
+        id: conversationId,
+        title: conversationData.title,
+        createTime: conversationData.createTime,
+        updateTime: conversationData.updateTime,
+        currentNodeId: conversationData.currentNodeId || null,
+        nodeCount: conversationData.nodes?.length || 0,
+        edgeCount: conversationData.edges?.length || 0
+      });
+    };
+
+    // Cursor requests keep the transaction active. Once both old payload stores
+    // are cleared, queue the complete replacement snapshot synchronously in the
+    // same transaction so readers can observe only the old or the new version.
+    deleteConversationRecords(nodeStore, conversationId, publishSnapshot);
+    deleteConversationRecords(edgeStore, conversationId, publishSnapshot);
+    await done;
   }
 
   close() {

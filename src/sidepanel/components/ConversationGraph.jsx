@@ -11,6 +11,7 @@ import {
 
 import QANode from './QANode';
 import StartNode from './StartNode';
+import { getQATreeStructureKey } from '../utils/qa-tree.js';
 import {
   buildAndLayoutQATree,
   GRAPH_NODE_WIDTH,
@@ -30,20 +31,6 @@ const defaultEdgeOptions = {
   style: { strokeWidth: 1.5 }
 };
 
-function getTreeStructureKey(qaTree) {
-  if (!qaTree) return '';
-
-  const nodeIds = [
-    ...Array.from(qaTree.qNodeMap?.keys?.() || [], id => `q:${id}`),
-    ...Array.from(qaTree.aNodeMap?.keys?.() || [], id => `a:${id}`)
-  ];
-  const parents = Array.from(qaTree.parentMap?.entries?.() || [], ([child, parent]) =>
-    `p:${child}:${parent || ''}`
-  );
-
-  return [...nodeIds, ...parents].sort().join('|');
-}
-
 function GraphContent({
   qaTree,
   selectedPath,
@@ -58,7 +45,7 @@ function GraphContent({
   const previousStructureKeyRef = useRef('');
   const clickTimerRef = useRef(null);
 
-  const structureKey = useMemo(() => getTreeStructureKey(qaTree), [qaTree]);
+  const structureKey = useMemo(() => getQATreeStructureKey(qaTree), [qaTree]);
 
   const handleExpandAnswer = useCallback((nodeId) => {
     setExpandedQNodes(previous => {
@@ -179,11 +166,6 @@ function GraphContent({
     event.stopPropagation();
   }, []);
 
-  const nodeColor = useCallback((node) => {
-    if (node.data?.nodeType === 'start') return '#777777';
-    return node.selected ? '#a0a0a0' : '#686868';
-  }, []);
-
   return (
     <ReactFlow
       className="cg-graph-interactive"
@@ -218,7 +200,6 @@ function GraphContent({
         <MiniMap
           className="cg-minimap"
           style={{ width: 140, height: 105 }}
-          nodeColor={nodeColor}
           nodeStrokeWidth={2}
           zoomable
           pannable

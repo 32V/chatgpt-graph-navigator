@@ -17,7 +17,7 @@ let isInitialized = false;
 
 const messageStates = new WeakMap();
 
-export async function getCollapseSettings() {
+async function getCollapseSettings() {
   try {
     const result = await chrome.storage.local.get(STORAGE_KEYS.COLLAPSE_SETTINGS);
     const stored = result[STORAGE_KEYS.COLLAPSE_SETTINGS];
@@ -28,22 +28,18 @@ export async function getCollapseSettings() {
   return { ...DEFAULT_COLLAPSE_SETTINGS };
 }
 
-export async function saveCollapseSettings(newSettings) {
-  try {
-    settings = { ...DEFAULT_COLLAPSE_SETTINGS, ...newSettings };
-    await chrome.storage.local.set({ [STORAGE_KEYS.COLLAPSE_SETTINGS]: settings });
-    log('info', 'Collapse', 'Settings saved:', settings);
-  } catch (error) {
-    log('error', 'Collapse', 'Failed to save settings:', error);
-  }
-}
-
 function injectStyles() {
   if (styleElement) return;
   styleElement = document.createElement('style');
   styleElement.id = 'chatgpt-graph-collapse-styles';
   styleElement.textContent = COLLAPSE_STYLES;
   document.head.appendChild(styleElement);
+}
+
+function findContentContainer(container) {
+  return container.querySelector(
+    '.markdown, .whitespace-pre-wrap, [data-message-content], [data-message-author-role]'
+  );
 }
 
 function getMessageTextLength(container) {
@@ -61,12 +57,6 @@ function getMessageType(container) {
   if (container.querySelector('h5')) return 'user';
   if (container.querySelector('h6')) return 'assistant';
   return null;
-}
-
-function findContentContainer(container) {
-  return container.querySelector(
-    '.markdown, .whitespace-pre-wrap, [data-message-content], [data-message-author-role]'
-  );
 }
 
 function findActionButton(container, kind) {
@@ -146,8 +136,7 @@ function processMessage(container, isSettingsUpdate = false) {
     messageType,
     contentContainer,
     button,
-    isCollapsed,
-    textLength
+    isCollapsed
   };
   messageStates.set(container, state);
 
@@ -216,7 +205,7 @@ export async function initCollapseManager() {
   isInitialized = true;
 }
 
-export async function updateCollapseSettings() {
+async function updateCollapseSettings() {
   settings = await getCollapseSettings();
   processAllMessages(true);
 }
@@ -226,11 +215,5 @@ export function setupSettingsListener() {
     if (areaName === 'local' && changes[STORAGE_KEYS.COLLAPSE_SETTINGS]) {
       void updateCollapseSettings();
     }
-  });
-
-  chrome.runtime?.onMessage?.addListener((message, _sender, sendResponse) => {
-    if (message.type !== 'COLLAPSE_SETTINGS_CHANGED') return false;
-    updateCollapseSettings().then(() => sendResponse({ success: true }));
-    return true;
   });
 }

@@ -1,11 +1,22 @@
 import { LOG_PREFIX, STORAGE_KEYS } from './constants.js';
 
-let debugLogEnabled = false;
-let debugLogLevels = {
+const DEFAULT_DEBUG_LOG_LEVELS = {
   verbose: true,
   warn: true,
   error: true
 };
+
+let debugLogEnabled = false;
+let debugLogLevels = { ...DEFAULT_DEBUG_LOG_LEVELS };
+let debugStorageListenerInstalled = false;
+
+function applyDebugSettings(enabled, levels) {
+  debugLogEnabled = enabled === true;
+  debugLogLevels = {
+    ...DEFAULT_DEBUG_LOG_LEVELS,
+    ...(levels || {})
+  };
+}
 
 export async function initDebugLogSetting() {
   try {
@@ -13,11 +24,27 @@ export async function initDebugLogSetting() {
       STORAGE_KEYS.DEBUG_LOG_ENABLED,
       STORAGE_KEYS.DEBUG_LOG_LEVELS
     ]);
-    debugLogEnabled = result[STORAGE_KEYS.DEBUG_LOG_ENABLED] === true;
-    debugLogLevels = {
-      ...debugLogLevels,
-      ...(result[STORAGE_KEYS.DEBUG_LOG_LEVELS] || {})
-    };
+    applyDebugSettings(
+      result[STORAGE_KEYS.DEBUG_LOG_ENABLED],
+      result[STORAGE_KEYS.DEBUG_LOG_LEVELS]
+    );
+
+    if (!debugStorageListenerInstalled && chrome.storage?.onChanged) {
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== 'local') return;
+
+        if (changes[STORAGE_KEYS.DEBUG_LOG_ENABLED]) {
+          debugLogEnabled = changes[STORAGE_KEYS.DEBUG_LOG_ENABLED].newValue === true;
+        }
+        if (changes[STORAGE_KEYS.DEBUG_LOG_LEVELS]) {
+          debugLogLevels = {
+            ...DEFAULT_DEBUG_LOG_LEVELS,
+            ...(changes[STORAGE_KEYS.DEBUG_LOG_LEVELS].newValue || {})
+          };
+        }
+      });
+      debugStorageListenerInstalled = true;
+    }
   } catch {
     // Non-extension/test contexts may not expose storage.
   }

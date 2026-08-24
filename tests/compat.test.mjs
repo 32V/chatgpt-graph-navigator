@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
+import test from 'node:test';
 
-// Ask the compatibility script to expose its pure helpers for this process.
 globalThis.__CHATGPT_GRAPH_EDIT_PAGINATION_COMPAT_TEST__ = true;
 await import('../src/content/compat/edit-pagination-compat.js');
-
 const compat = globalThis.__chatgptGraphEditPaginationCompat;
-assert.ok(compat, 'compatibility helpers were not exposed');
 
 function makeLayer({
   experiment = '1973873291',
@@ -28,26 +26,24 @@ function makeLayer({
   };
 }
 
-// New variant-modal experiment: versions should stay in the same conversation.
-{
-  const payload = {
+test('edited-message compatibility stays narrowly scoped to the known layer', () => {
+  assert.ok(compat, 'compatibility helpers were not exposed');
+
+  const modalPayload = {
     layer_configs: {
       [compat.EDIT_LAYER_ID]: makeLayer()
     }
   };
-  compat.patchObject(payload);
-  const layer = payload.layer_configs[compat.EDIT_LAYER_ID];
-  assert.equal(layer.value.variant_modal, false);
-  assert.equal(layer.value.hide_pagination, false);
-  assert.equal(layer.value.edit_actions_treatment, 'default');
-  assert.equal(layer.is_user_in_experiment, false);
-  assert.equal(layer.group_name, 'Control');
-  assert.deepEqual(layer.explicit_parameters, []);
-}
+  compat.patchObject(modalPayload);
+  const modalLayer = modalPayload.layer_configs[compat.EDIT_LAYER_ID];
+  assert.equal(modalLayer.value.variant_modal, false);
+  assert.equal(modalLayer.value.hide_pagination, false);
+  assert.equal(modalLayer.value.edit_actions_treatment, 'default');
+  assert.equal(modalLayer.is_user_in_experiment, false);
+  assert.equal(modalLayer.group_name, 'Control');
+  assert.deepEqual(modalLayer.explicit_parameters, []);
 
-// Older branch-prefill experiment: legacy pagination must be restored.
-{
-  const payload = {
+  const branchPayload = {
     layer_configs: {
       [compat.EDIT_LAYER_ID]: makeLayer({
         experiment: '3879348497',
@@ -62,34 +58,27 @@ function makeLayer({
       })
     }
   };
-  compat.patchObject(payload);
-  const layer = payload.layer_configs[compat.EDIT_LAYER_ID];
-  assert.equal(layer.value.hide_pagination, false);
-  assert.equal(layer.value.edit_actions_treatment, 'default');
-  assert.equal(layer.value.variant_modal, false);
-  assert.deepEqual(layer.explicit_parameters, ['unrelated']);
-}
+  compat.patchObject(branchPayload);
+  const branchLayer = branchPayload.layer_configs[compat.EDIT_LAYER_ID];
+  assert.equal(branchLayer.value.hide_pagination, false);
+  assert.equal(branchLayer.value.edit_actions_treatment, 'default');
+  assert.equal(branchLayer.value.variant_modal, false);
+  assert.deepEqual(branchLayer.explicit_parameters, ['unrelated']);
 
-// The layer ID is authoritative even if a future payload only includes the new flag.
-{
-  const payload = {
+  const minimalPayload = {
     layer_configs: {
       [compat.EDIT_LAYER_ID]: makeLayer({ value: { variant_modal: true } })
     }
   };
-  compat.patchObject(payload);
-  const value = payload.layer_configs[compat.EDIT_LAYER_ID].value;
-  assert.deepEqual(value, {
+  compat.patchObject(minimalPayload);
+  assert.deepEqual(minimalPayload.layer_configs[compat.EDIT_LAYER_ID].value, {
     variant_modal: false,
     hide_pagination: false,
     edit_buttons_hidden: false,
     edit_actions_treatment: 'default',
     edit_warning: 'none'
   });
-}
 
-// client-bootstrap commonly embeds Statsig JSON as a JSON string.
-{
   const inner = {
     layer_configs: {
       [compat.EDIT_LAYER_ID]: makeLayer()
@@ -97,15 +86,12 @@ function makeLayer({
   };
   const outer = { statsigPayload: JSON.stringify(inner) };
   compat.patchObject(outer);
-  const reparsed = JSON.parse(outer.statsigPayload);
-  assert.equal(reparsed.layer_configs[compat.EDIT_LAYER_ID].value.variant_modal, false);
-}
+  assert.equal(
+    JSON.parse(outer.statsigPayload).layer_configs[compat.EDIT_LAYER_ID].value.variant_modal,
+    false
+  );
 
-// Do not mutate unrelated uses of similarly named fields outside the known layer/shape.
-{
   const unrelated = { feature: { variant_modal: true, enabled: true } };
   compat.patchObject(unrelated);
   assert.deepEqual(unrelated, { feature: { variant_modal: true, enabled: true } });
-}
-
-console.log('edit-pagination compatibility tests passed');
+});

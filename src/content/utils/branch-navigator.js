@@ -1,12 +1,13 @@
 /**
- * Branch navigation helpers.
+ * DOM actuator for branch navigation.
  *
- * Conversation topology comes from ChatGPT's backend mapping. The DOM is used
- * only as an actuator: to identify the currently rendered sibling, expose a
- * virtualized turn, and click ChatGPT's native branch controls.
+ * Canonical topology is supplied by normalized backend nodes. This module only
+ * mounts the relevant turn, discovers ChatGPT's native version controls, clicks
+ * them, and verifies the resulting message ID.
  */
 
 import { log } from '../../shared/utils.js';
+import { buildDepthMap, buildPathToTarget, getSiblings } from './branch-model.js';
 import {
   resolveMessageId,
   findArticleByMessageId,
@@ -100,7 +101,7 @@ function findControlsAroundCounter(counter) {
   if (!info) return null;
 
   let scope = counter.parentElement;
-  for (let depth = 0; depth < 6 && scope; depth++) {
+  for (let depth = 0; depth < 6 && scope; depth += 1) {
     const buttons = Array.from(scope.querySelectorAll('button'));
     const ranked = rankButtonsNearCounter(counter, buttons);
     const prevButton = ranked.find(({ button, distance }) =>
@@ -110,18 +111,15 @@ function findControlsAroundCounter(counter) {
       distance <= 240 && NEXT_LABEL_RE.test(buttonLabel(button))
     )?.button || null;
 
-    // Prefer semantic controls that are spatially close to the counter. At the
-    // first/last branch ChatGPT may omit one edge button entirely, so one
-    // identified direction is still useful.
+    // At the first/last branch ChatGPT may omit one edge button entirely, so a
+    // single semantically identified direction is still useful.
     if (prevButton || nextButton) {
       return { ...info, counter, prevButton, nextButton };
     }
 
     if (buttons.length >= 2) {
       const positional = nearestButtonsToCounter(counter, buttons);
-      if (positional) {
-        return { ...info, counter, ...positional };
-      }
+      if (positional) return { ...info, counter, ...positional };
     }
     scope = scope.parentElement;
   }
@@ -162,44 +160,6 @@ function findBranchControls(id) {
   return null;
 }
 
-/**
- * Returns IDs for the turns that are currently mounted in the ChatGPT DOM.
- * This is intentionally not treated as the full active branch because ChatGPT
- * virtualizes long conversations.
- */
-export function getCurrentDisplayedPath() {
-  return getAllMessageContainers()
-    .map(container => resolveMessageId(container) || container.getAttribute('data-turn-id'))
-    .filter(Boolean);
-}
-
-export function getBranchInfo(id) {
-  const controls = findBranchControls(id);
-  return controls ? { current: controls.current, total: controls.total } : null;
-}
-
-export function clickBranchButton(id, direction) {
-  const controls = findBranchControls(id);
-  if (!controls) {
-    log('warn', 'BranchNav', `Branch controls not found for ${id}`);
-    return false;
-  }
-
-  const button = direction === 'prev' ? controls.prevButton : controls.nextButton;
-  if (isDisabledButton(button)) {
-    log('warn', 'BranchNav', `Branch button ${direction} is disabled for ${id}`);
-    return false;
-  }
-
-  try {
-    button.click();
-    return true;
-  } catch (error) {
-    log('error', 'BranchNav', `Failed to click ${direction}: ${error.message}`);
-    return false;
-  }
-}
-
 function findMountedSibling(siblingIds, excludeId = null) {
   for (const siblingId of siblingIds) {
     if (siblingId === excludeId) continue;
@@ -209,10 +169,7 @@ function findMountedSibling(siblingIds, excludeId = null) {
   return null;
 }
 
-/**
- * Wait until a different member of a sibling group is rendered.
- */
-export function waitForBranchChange(oldId, timeout = BRANCH_CHANGE_TIMEOUT, siblingIds = null) {
+function waitForBranchChange(oldId, timeout = BRANCH_CHANGE_TIMEOUT, siblingIds = null) {
   return new Promise(resolve => {
     const start = Date.now();
 
@@ -240,74 +197,6 @@ export function waitForBranchChange(oldId, timeout = BRANCH_CHANGE_TIMEOUT, sibl
 
     requestAnimationFrame(check);
   });
-}
-
-/**
- * Build a root-to-target path from canonical node parent links.
- */
-export function buildPathToTarget(targetId, nodeMap) {
-  const path = [];
-  const visited = new Set();
-  let currentId = targetId;
-
-  while (currentId && nodeMap.has(currentId) && !visited.has(currentId)) {
-    visited.add(currentId);
-    path.unshift(currentId);
-    currentId = nodeMap.get(currentId)?.parent || null;
-  }
-
-  return path;
-}
-
-/**
- * Return sibling IDs in graph order. For root-level nodes the filtered parent
- * may be absent, so creation order is the fallback. Navigation verifies actual
- * message IDs and does not rely on this order when it disagrees with the UI.
- */
-export function getSiblings(nodeId, nodeMap) {
-  const node = nodeMap.get(nodeId);
-  if (!node) return [nodeId];
-
-  if (node.parent) {
-    const parent = nodeMap.get(node.parent);
-    if (!parent?.children?.length) return [nodeId];
-    return parent.children.filter(id => nodeMap.has(id));
-  }
-
-  const rawParent = node._rawParent || null;
-  return Array.from(nodeMap.values())
-    .filter(candidate => !candidate.parent && (rawParent ? candidate._rawParent === rawParent : true))
-    .sort((a, b) => {
-      const timeDiff = (a.createTime || 0) - (b.createTime || 0);
-      return timeDiff || String(a.id).localeCompare(String(b.id));
-    })
-    .map(candidate => candidate.id);
-}
-
-export function getSiblingIndex(nodeId, nodeMap) {
-  const siblings = getSiblings(nodeId, nodeMap);
-  const index = siblings.indexOf(nodeId);
-  return index >= 0 ? index + 1 : 1;
-}
-
-function buildDepthMap(nodes) {
-  const nodeMap = new Map(nodes.map(node => [node.id, node]));
-  const cache = new Map();
-
-  const depthOf = (id, visiting = new Set()) => {
-    if (cache.has(id)) return cache.get(id);
-    if (visiting.has(id)) return 0;
-    visiting.add(id);
-
-    const parentId = nodeMap.get(id)?.parent;
-    const depth = parentId && nodeMap.has(parentId) ? depthOf(parentId, visiting) + 1 : 0;
-    cache.set(id, depth);
-    visiting.delete(id);
-    return depth;
-  };
-
-  for (const node of nodes) depthOf(node.id);
-  return cache;
 }
 
 function findScrollContainer() {
@@ -382,8 +271,6 @@ async function mountSiblingGroup(siblingIds, targetDepth, nodeMap, depthMap, tim
     } else if (targetDepth > range.max) {
       nextTop += step;
     } else {
-      // The desired logical depth is near the viewport but the exact turn is
-      // not mounted yet. Nudge toward the corresponding half of the range.
       const midpoint = (range.min + range.max) / 2;
       const direction = targetDepth <= midpoint ? -1 : 1;
       nextTop += direction * Math.max(120, Math.round(step / 2));
@@ -431,8 +318,7 @@ async function moveSiblingOnce(currentId, direction, siblingIds) {
 }
 
 async function scanSiblingGroupForTarget(currentId, targetId, siblingIds) {
-  // First walk to the first native branch, checking every ID on the way.
-  for (let step = 0; step < MAX_NAV_STEPS; step++) {
+  for (let step = 0; step < MAX_NAV_STEPS; step += 1) {
     if (currentId === targetId) return currentId;
     const controls = await getControlsForMountedSibling(currentId);
     if (!controls) return null;
@@ -443,10 +329,9 @@ async function scanSiblingGroupForTarget(currentId, targetId, siblingIds) {
     currentId = nextId;
   }
 
-  // Then enumerate forward. This fallback is independent of graph sibling
-  // ordering and therefore survives ordering differences between mapping data
-  // and the native branch counter.
-  for (let step = 0; step < MAX_NAV_STEPS; step++) {
+  // Enumerate forward from the first native branch. This fallback is independent
+  // of mapping sibling order and therefore survives frontend ordering differences.
+  for (let step = 0; step < MAX_NAV_STEPS; step += 1) {
     if (currentId === targetId) return currentId;
     const controls = await getControlsForMountedSibling(currentId);
     if (!controls) return null;
@@ -484,7 +369,7 @@ async function switchSiblingGroup(targetId, siblingIds, targetDepth, nodeMap, de
     currentGraphIndex === controls.current;
 
   if (graphOrderMatchesUI) {
-    for (let step = 0; step < MAX_NAV_STEPS && currentId !== targetId; step++) {
+    for (let step = 0; step < MAX_NAV_STEPS && currentId !== targetId; step += 1) {
       controls = await getControlsForMountedSibling(currentId);
       if (!controls) return false;
 
@@ -493,8 +378,6 @@ async function switchSiblingGroup(targetId, siblingIds, targetDepth, nodeMap, de
       if (!nextId) break;
       currentId = nextId;
 
-      // If the observed ID no longer agrees with the native counter, fall back
-      // to an ID-based scan rather than trusting the graph order.
       const observedIndex = siblingIds.indexOf(currentId) + 1;
       const nextControls = await getControlsForMountedSibling(currentId);
       if (!nextControls || observedIndex !== nextControls.current) break;
@@ -510,42 +393,7 @@ async function switchSiblingGroup(targetId, siblingIds, targetDepth, nodeMap, de
     });
   }
 
-  return !!(await scanSiblingGroupForTarget(currentId, targetId, siblingIds));
-}
-
-/**
- * Switch the native ChatGPT control associated with one sibling group.
- */
-export async function switchToBranchIndex(startMessageId, targetIndex) {
-  const firstControls = findBranchControls(startMessageId);
-  if (!firstControls || targetIndex < 1 || targetIndex > firstControls.total) return false;
-  if (firstControls.current === targetIndex) return true;
-
-  let currentId = startMessageId;
-  let displayed = getCurrentDisplayedPath();
-  const mountedIndex = displayed.indexOf(startMessageId);
-  if (mountedIndex < 0) return false;
-
-  for (let step = 0; step < MAX_NAV_STEPS; step++) {
-    const controls = findBranchControls(currentId);
-    if (!controls) return false;
-    if (controls.current === targetIndex) return true;
-
-    const direction = targetIndex > controls.current ? 'next' : 'prev';
-    const button = direction === 'next' ? controls.nextButton : controls.prevButton;
-    if (isDisabledButton(button)) return false;
-
-    const oldId = currentId;
-    button.click();
-    await waitForBranchChange(oldId);
-    await sleep(100);
-
-    displayed = getCurrentDisplayedPath();
-    currentId = displayed[mountedIndex];
-    if (!currentId) return false;
-  }
-
-  return findBranchControls(currentId)?.current === targetIndex;
+  return Boolean(await scanSiblingGroupForTarget(currentId, targetId, siblingIds));
 }
 
 /**

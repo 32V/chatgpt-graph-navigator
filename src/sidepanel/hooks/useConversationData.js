@@ -1,32 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MESSAGE_TYPES } from '../../shared/constants.js';
-import { sendMessageToTabWithFallback } from '../../shared/tab-messaging.js';
+import { isTrustedHostEvent, postToHost } from '../host-messaging.js';
 
-const CONVERSATION_ID_REGEX = /\/c\/([a-f0-9-]+)/i;
-
-async function queryHostTab() {
-  try {
-    const tab = await chrome.tabs.getCurrent();
-    if (tab) return tab;
-  } catch {
-    // Some Chromium builds do not expose getCurrent() to extension iframes.
-  }
-
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    return tab || null;
-  } catch {
-    return null;
-  }
-}
-
-function conversationIdFromUrl(url = '') {
-  return String(url).match(CONVERSATION_ID_REGEX)?.[1] || null;
-}
-
-async function getHostConversationId() {
-  return conversationIdFromUrl((await queryHostTab())?.url);
-}
+const HOST_COMMAND_TIMEOUT_MS = 8000;
+const REFRESH_DEDUPE_MS = 5000;
 
 async function sendRuntimeMessage(message) {
   if (!chrome.runtime?.id) throw new Error('Extension context invalidated');
@@ -51,50 +28,60 @@ export function useConversationData() {
   const [currentNodeId, setCurrentNodeId] = useState(null);
 
   const activeConversationRef = useRef(null);
-  const pendingRefreshes = useRef(new Set());
+  const pendingRefreshes = useRef(new Map());
+  const pendingHostRequests = useRef(new Map());
+  const requestSequence = useRef(0);
+
+  const clearPendingRefresh = useCallback((conversationId) => {
+    const timer = pendingRefreshes.current.get(conversationId);
+    if (timer) clearTimeout(timer);
+    pendingRefreshes.current.delete(conversationId);
+  }, []);
+
+  const requestHostCommand = useCallback((command, payload = {}) => {
+    return new Promise((resolve, reject) => {
+      const requestId = `host-${Date.now()}-${++requestSequence.current}`;
+      const timer = setTimeout(() => {
+        pendingHostRequests.current.delete(requestId);
+        reject(new Error(`Host command timed out: ${command}`));
+      }, HOST_COMMAND_TIMEOUT_MS);
+
+      pendingHostRequests.current.set(requestId, { resolve, reject, timer });
+      postToHost({
+        type: 'CG_HOST_COMMAND',
+        payload: { requestId, command, ...payload }
+      });
+    });
+  }, []);
 
   const triggerContentRefresh = useCallback(async (conversationId) => {
     if (!conversationId || pendingRefreshes.current.has(conversationId)) return;
 
-    const tab = await queryHostTab();
-    if (!tab?.id || conversationIdFromUrl(tab.url) !== conversationId) return;
-
-    pendingRefreshes.current.add(conversationId);
-    const timeout = setTimeout(() => pendingRefreshes.current.delete(conversationId), 5000);
+    const timer = setTimeout(
+      () => pendingRefreshes.current.delete(conversationId),
+      REFRESH_DEDUPE_MS
+    );
+    pendingRefreshes.current.set(conversationId, timer);
 
     try {
-      const response = await sendMessageToTabWithFallback(tab.id, {
-        type: MESSAGE_TYPES.REFRESH_DATA,
-        payload: { conversationId }
-      });
-      if (response?.success === false) {
-        pendingRefreshes.current.delete(conversationId);
-        clearTimeout(timeout);
-      }
+      const result = await requestHostCommand('refresh', { conversationId });
+      if (result?.success === false) throw new Error('Canonical refresh failed');
     } catch (refreshError) {
-      console.warn('[Panel] Content refresh failed:', refreshError?.message);
-      pendingRefreshes.current.delete(conversationId);
-      clearTimeout(timeout);
+      clearPendingRefresh(conversationId);
+      throw refreshError;
     }
-  }, []);
+  }, [clearPendingRefresh, requestHostCommand]);
 
   const navigateToMessage = useCallback(async (messageId) => {
-    if (!messageId) return false;
+    const conversationId = activeConversationRef.current;
+    if (!conversationId || !messageId) return false;
 
-    const tab = await queryHostTab();
-    const conversationId = conversationIdFromUrl(tab?.url);
-    if (!tab?.id || !conversationId || conversationId !== activeConversationRef.current) {
-      throw new Error('ChatGPT host tab is unavailable');
-    }
-
-    const response = await sendMessageToTabWithFallback(tab.id, {
-      type: MESSAGE_TYPES.SCROLL_TO_MESSAGE,
-      payload: { messageId }
-    }, {
-      retryDelayMs: 500
+    const result = await requestHostCommand('navigate', {
+      conversationId,
+      messageId
     });
-    return response?.success !== false;
-  }, []);
+    return result?.success !== false;
+  }, [requestHostCommand]);
 
   const fetchConversation = useCallback(async (conversationId, options = {}) => {
     const { requestIfMissing = true } = options;
@@ -115,12 +102,11 @@ export function useConversationData() {
         payload: { conversationId }
       });
 
-      // A route change may complete while this IndexedDB request is in flight.
       if (activeConversationRef.current !== conversationId) return;
 
       if (response?.success && response.data) {
         const graphData = transformToGraphData(response.data);
-        pendingRefreshes.current.delete(conversationId);
+        clearPendingRefresh(conversationId);
         setConversationData(graphData);
         setCurrentNodeId(graphData.currentNodeId);
         return;
@@ -136,37 +122,72 @@ export function useConversationData() {
     } finally {
       if (activeConversationRef.current === conversationId) setIsLoading(false);
     }
-  }, [triggerContentRefresh]);
+  }, [clearPendingRefresh, triggerContentRefresh]);
 
-  const syncWithHostTab = useCallback(async () => {
-    const conversationId = await getHostConversationId();
-    if (conversationId === activeConversationRef.current) return;
+  const syncConversation = useCallback(async (conversationId) => {
+    const nextId = conversationId || null;
+    if (nextId === activeConversationRef.current) return;
 
-    activeConversationRef.current = conversationId;
+    activeConversationRef.current = nextId;
     setConversationData(null);
     setCurrentNodeId(null);
     setError(null);
 
-    if (!conversationId) {
+    if (!nextId) {
       setIsLoading(false);
       return;
     }
 
     setIsLoading(true);
-    await fetchConversation(conversationId);
+    await fetchConversation(nextId);
   }, [fetchConversation]);
 
   const refreshData = useCallback(async () => {
-    const conversationId = await getHostConversationId();
+    const conversationId = activeConversationRef.current;
     if (!conversationId) return;
-
-    if (activeConversationRef.current !== conversationId) {
-      activeConversationRef.current = conversationId;
-      setConversationData(null);
-      setCurrentNodeId(null);
-    }
     await triggerContentRefresh(conversationId);
   }, [triggerContentRefresh]);
+
+  useEffect(() => {
+    const handleHostMessage = (event) => {
+      if (!isTrustedHostEvent(event)) return;
+
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+
+      if (data.type === 'CG_HOST_CONTEXT') {
+        void syncConversation(data.payload?.conversationId || null);
+        return;
+      }
+
+      if (data.type !== 'CG_HOST_RESPONSE') return;
+      const requestId = data.payload?.requestId;
+      const pending = pendingHostRequests.current.get(requestId);
+      if (!pending) return;
+
+      pendingHostRequests.current.delete(requestId);
+      clearTimeout(pending.timer);
+      if (data.payload?.success === false) {
+        pending.reject(new Error(data.payload?.error || 'Host command failed'));
+      } else {
+        pending.resolve(data.payload?.data);
+      }
+    };
+
+    window.addEventListener('message', handleHostMessage);
+    postToHost({ type: 'CG_REQUEST_HOST_CONTEXT' });
+
+    return () => {
+      window.removeEventListener('message', handleHostMessage);
+      for (const pending of pendingHostRequests.current.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error('Panel closed'));
+      }
+      pendingHostRequests.current.clear();
+      for (const timer of pendingRefreshes.current.values()) clearTimeout(timer);
+      pendingRefreshes.current.clear();
+    };
+  }, [syncConversation]);
 
   useEffect(() => {
     const handleMessage = (message) => {
@@ -174,7 +195,7 @@ export function useConversationData() {
       const conversationId = message.payload?.conversationId;
       if (!conversationId) return;
 
-      pendingRefreshes.current.delete(conversationId);
+      clearPendingRefresh(conversationId);
       if (conversationId === activeConversationRef.current) {
         void fetchConversation(conversationId, { requestIfMissing: false });
       }
@@ -182,23 +203,7 @@ export function useConversationData() {
 
     chrome.runtime.onMessage.addListener(handleMessage);
     return () => chrome.runtime.onMessage.removeListener(handleMessage);
-  }, [fetchConversation]);
-
-  useEffect(() => {
-    void syncWithHostTab();
-
-    const onUpdated = (_tabId, changeInfo) => {
-      if (changeInfo?.url) void syncWithHostTab();
-    };
-
-    chrome.tabs.onUpdated.addListener(onUpdated);
-    const timer = setInterval(() => void syncWithHostTab(), 1500);
-
-    return () => {
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      clearInterval(timer);
-    };
-  }, [syncWithHostTab]);
+  }, [clearPendingRefresh, fetchConversation]);
 
   return {
     conversationData,

@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { isTrustedHostEvent, postToHost } from './host-messaging.js';
 
 const params = new URLSearchParams(window.location.search);
 const initialTheme = params.get('theme');
@@ -19,17 +20,13 @@ function applyHostTheme(payload = {}) {
 }
 
 window.addEventListener('message', (event) => {
-  if (event.source !== window.parent) return;
+  if (!isTrustedHostEvent(event)) return;
   if (event?.data?.type === 'CG_THEME') {
     applyHostTheme(event.data.payload || {});
   }
 });
 
-try {
-  window.parent?.postMessage({ type: 'CG_THEME_REQUEST' }, '*');
-} catch {
-  // The dock will send the theme again when the frame reports readiness.
-}
+postToHost({ type: 'CG_THEME_REQUEST' });
 
 const container = document.getElementById('root');
 createRoot(container).render(

@@ -13,13 +13,13 @@ The project is intentionally English-only.
 
 - **Automatic docked panel** — opens on ChatGPT conversation routes, resizes with the page, and can collapse to a narrow rail.
 - **Graph view** — inspect the full conversation topology, pan and zoom, and focus individual nodes.
-- **Timeline tree** — browse the same conversation as a compact hierarchy with search and filtering.
+- **Timeline tree** — browse the same conversation as a compact hierarchy with search and filtering; manual expansion state survives ordinary canonical refreshes.
 - **Branch-aware navigation** — click a graph or tree node to switch ChatGPT to the corresponding message version and branch.
 - **Native branch-state sync** — ChatGPT's backend `current_node` determines the active branch, including when you switch versions with ChatGPT's own `1/N` controls.
 - **Restored in-place version navigation** — a small `document_start` compatibility layer restores edited-message pagination when a ChatGPT frontend experiment hides it.
 - **Canonical topology** — graph ancestry comes from ChatGPT's backend conversation `mapping`, never DOM sibling order.
 - **Stable answer expansion** — revealing a collapsed single assistant response does not move unrelated graph nodes.
-- **Stable message details** — full-message text opens as an overlay without changing Dagre node geometry.
+- **Stable message details** — full-message text opens as a dismissible overlay without changing Dagre node geometry.
 - **ChatGPT-native styling** — the dock derives its visual system from the active ChatGPT theme.
 - **Local persistence** — normalized graph data and preferences stay in the browser.
 
@@ -34,6 +34,7 @@ The project is intentionally English-only.
 | Mouse wheel / trackpad | Pan or zoom through React Flow controls |
 | `+` / `-` on a question | Reveal or hide its single assistant response |
 | Message-detail button | Show or hide the full message without relayout |
+| `Esc` / outside click | Close an open full-message overlay |
 | Panel left edge | Resize the dock |
 | Panel chevron | Collapse or expand the dock |
 
@@ -63,7 +64,7 @@ npm ci
 npm run build
 ```
 
-Use `npm run dev` for watch mode or `npm run release` to create `release/` plus a ZIP archive.
+Use `npm run dev` for watch mode. Before committing, run `npm run validate`; it applies the repository policy check, the regression suite, the production build, and release-package verification through the same entry point used by CI.
 
 ## Architecture
 
@@ -75,6 +76,7 @@ ChatGPT page
 │   ├── DOM change signals
 │   ├── branch-navigation actuator
 │   └── right-dock host
+│       └── explicit host-context / command bridge
 │
 ├── service worker
 │   ├── message routing
@@ -98,7 +100,8 @@ See [docs/architecture.md](docs/architecture.md) for details.
 ```text
 ├── assets/                      # Extension icons and active UI assets
 ├── docs/                        # Architecture and development notes
-├── scripts/                     # Release and regression checks
+├── scripts/                     # Policy/release tooling
+├── tests/                       # Compact Node regression suite
 ├── src/
 │   ├── background/              # MV3 service worker and persistence
 │   ├── content/                 # ChatGPT integration and navigation
@@ -110,21 +113,17 @@ See [docs/architecture.md](docs/architecture.md) for details.
 └── manifest.json                # Chrome extension manifest
 ```
 
-## Regression checks
+## Validation
 
-CI runs the same checks before packaging:
+The test surface is intentionally small. `tests/core.test.mjs` covers the pure canonical graph model, branch grouping, assistant-stream normalization, structural identity, and stable graph layout. `tests/compat.test.mjs` covers the isolated edited-message compatibility adapter. Both use Node's built-in test runner and require no additional test framework.
 
 ```bash
-node scripts/check-no-chinese.mjs
-node scripts/test-edit-pagination-compat.mjs
-node scripts/test-current-node.mjs
-node scripts/test-qa-tree-model.mjs
-node scripts/test-assistant-stream-normalizer.mjs
-node scripts/test-qa-tree-layout.mjs
-npm run release
+npm test          # regression suite only
+npm run check     # English-only source/documentation policy
+npm run validate  # check + tests + release build + package verification
 ```
 
-The tests cover the early ChatGPT compatibility adapter, canonical active-branch resolution, QA-tree construction, assistant-stream normalization, and the invariant that revealing a single assistant response does not move existing graph nodes.
+CI calls `npm run validate` rather than duplicating individual test/build logic in workflow YAML.
 
 ## Compatibility notes
 
@@ -134,7 +133,7 @@ ChatGPT is an evolving private web application. The extension therefore keeps fr
 - native previous/next version-control discovery;
 - virtualized-turn mounting and scrolling.
 
-Graph topology, active-path selection, persistence, and visualization remain independent of DOM adjacency.
+Graph topology, active-path selection, persistence, and visualization remain independent of DOM adjacency. The embedded UI also receives its conversation identity and navigation commands from the dock host rather than guessing the owning tab from global browser state.
 
 ## Privacy
 
