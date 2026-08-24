@@ -52,16 +52,18 @@ The DOM is deliberately not a semantic data source.
 
 The content script then refetches the backend conversation snapshot. No DOM sibling, wrapper position, or `previousElementSibling` relationship is converted into a graph edge.
 
-### UI actuation
+### Branch model and UI actuation
 
-DOM-dependent behavior is limited to operations that necessarily control ChatGPT's visible interface:
+Pure branch structure lives in `utils/branch-model.js`: root-to-target paths, sibling groups, and logical depths. It depends only on normalized canonical nodes and is directly regression-tested.
+
+`utils/branch-navigator.js` is the DOM actuator. It is limited to operations that necessarily control ChatGPT's visible interface:
 
 - locating a mounted message;
 - scrolling virtualized history until a required turn is mounted;
-- operating ChatGPT's native previous/next edited-message controls;
+- discovering and operating ChatGPT's native previous/next edited-message controls;
 - verifying the resulting message ID.
 
-This logic lives primarily in `utils/branch-navigator.js` and `utils/message-id-helper.js`.
+`utils/message-id-helper.js` provides the narrow message/turn lookup boundary shared by these DOM operations.
 
 ## Embedded host bridge
 
@@ -77,7 +79,7 @@ service worker
 content integration
 ```
 
-The bridge validates both the iframe origin and the host ChatGPT URL. A command also carries the expected conversation ID; the service worker rejects it if the host tab has already navigated elsewhere. This removes active-tab polling and prevents cross-tab races.
+The bridge validates both the iframe origin and the host ChatGPT URL. A command also carries the expected conversation ID; both the dock and service worker reject it if the host tab has already navigated elsewhere. This removes active-tab polling and prevents cross-tab races.
 
 ## Edited-message compatibility adapter
 
@@ -139,7 +141,7 @@ IndexedDB version 6 stores only data the current product reads:
 
 Earlier derived stores for rounds, branches, and raw backups are removed during the v6 upgrade. The React UI derives its QA tree directly from nodes and edges.
 
-A canonical write stores nodes and edges before publishing the corresponding conversation metadata. A concurrent reader may briefly observe the previous complete snapshot, but it cannot observe a new `currentNodeId` paired with the previous graph payload.
+Canonical snapshot reads and writes each use one IndexedDB transaction spanning all three stores. A write deletes the previous node/edge payload and queues the replacement nodes, edges, and conversation metadata before that transaction commits; a read requests all three parts in one readonly transaction. The panel therefore observes a complete old snapshot or a complete new snapshot rather than a mixture of generations.
 
 A panel may initialize before the content script has written the first snapshot. `GET_CONVERSATION` therefore treats a missing record as a normal cache miss; the UI requests a canonical refresh instead of surfacing an extension error.
 
@@ -171,7 +173,7 @@ Existing node coordinates therefore do not change during answer reveal/hide. Gra
 
 The repository keeps validation intentionally small and explicit:
 
-- `tests/core.test.mjs` — canonical graph model, branch grouping, stream normalization, semantic tree identity, and stable graph layout;
+- `tests/core.test.mjs` — canonical graph/branch model, stream normalization, semantic tree identity, and stable graph layout;
 - `tests/compat.test.mjs` — the isolated edited-message compatibility adapter;
 - `scripts/check-no-chinese.mjs` — repository language policy;
 - `scripts/verify-release.mjs` — release-package contract.
