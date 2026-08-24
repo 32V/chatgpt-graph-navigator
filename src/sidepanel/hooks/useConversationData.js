@@ -1,28 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MESSAGE_TYPES } from '../../shared/constants.js';
+import { isTrustedHostEvent, postToHost } from '../host-messaging.js';
 
 const HOST_COMMAND_TIMEOUT_MS = 8000;
-const TRUSTED_HOST_ORIGINS = new Set([
-  'https://chatgpt.com',
-  'https://chat.openai.com'
-]);
-
-const HOST_ORIGIN = (() => {
-  try {
-    const origin = new URL(document.referrer).origin;
-    return TRUSTED_HOST_ORIGINS.has(origin) ? origin : '*';
-  } catch {
-    return '*';
-  }
-})();
-
-function postToHost(message) {
-  window.parent?.postMessage(message, HOST_ORIGIN);
-}
-
-function isTrustedHostEvent(event) {
-  return event.source === window.parent && TRUSTED_HOST_ORIGINS.has(event.origin);
-}
 
 async function sendRuntimeMessage(message) {
   if (!chrome.runtime?.id) throw new Error('Extension context invalidated');
