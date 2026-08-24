@@ -48,26 +48,14 @@ async function loadSettings() {
   };
 }
 
-async function notifyActiveChat(message) {
-  const tab = await getActiveTab();
-  if (!tab?.id || !isChatGptUrl(tab.url)) return;
-  try {
-    await sendMessageToTabWithFallback(tab.id, message);
-  } catch {
-    // Stored settings are picked up on the next ChatGPT page load.
-  }
-}
-
 async function saveCollapseSettings() {
   await chrome.storage.local.set({ [STORAGE_KEYS.COLLAPSE_SETTINGS]: collapseSettings });
-  await notifyActiveChat({ type: 'COLLAPSE_SETTINGS_CHANGED' });
 }
 
 async function saveAssistantStreamSettings() {
   await chrome.storage.local.set({
     [STORAGE_KEYS.ASSISTANT_STREAM_SETTINGS]: assistantStreamSettings
   });
-  await notifyActiveChat({ type: MESSAGE_TYPES.ASSISTANT_STREAM_SETTINGS_CHANGED });
 }
 
 function assistantStreamSettingsHtml() {
@@ -325,7 +313,7 @@ async function renderStatus() {
     try {
       await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.CLEAR_TOKEN });
     } catch {
-      await chrome.storage.local.remove(['accessToken', 'tokenTimestamp', 'tokenSource', 'tokenInfo']);
+      await chrome.storage.local.remove(['accessToken', 'tokenTimestamp', 'tokenSource']);
     }
     await renderStatus();
   });
@@ -343,7 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
     console.error('Failed to initialize popup:', error);
     const container = document.getElementById('content');
     if (container) {
-      container.innerHTML = `<div class="status"><div class="status-item"><span class="status-label">Error</span><span class="status-value error">Failed to load settings</span></div></div>`;
+      container.innerHTML = '<div class="status"><div class="status-item"><span class="status-label">Error</span><span class="status-value error">Failed to load settings</span></div></div>';
     }
   });
 });
