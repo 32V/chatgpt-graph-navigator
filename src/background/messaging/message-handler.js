@@ -55,15 +55,7 @@ async function handleConversationLoaded(conversationData) {
 async function handleGetConversation(payload) {
   const conversationId = payload?.conversationId;
   if (!conversationId) throw new Error('Missing conversationId');
-
-  const conversation = await db.getConversation(conversationId);
-  if (!conversation) return null;
-
-  const [nodes, edges] = await Promise.all([
-    db.getNodes(conversationId),
-    db.getEdges(conversationId)
-  ]);
-  return { conversation, nodes, edges };
+  return db.getFullConversation(conversationId);
 }
 
 async function handleDockHostCommand(payload, sender) {
