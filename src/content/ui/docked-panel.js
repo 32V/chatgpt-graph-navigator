@@ -6,7 +6,9 @@
  * lives in `docked-panel.css`.
  */
 
-import { log, throttle } from '../../shared/utils.js';
+import { MESSAGE_TYPES } from '../../shared/constants.js';
+import { extractConversationId, log, throttle } from '../../shared/utils.js';
+import { createURLObserver } from '../observers/url-observer.js';
 
 const PANEL_ID = '__chatgpt_graph_docked_panel__';
 const BODY_CLASS = 'cg-graph-dock-visible';
@@ -16,7 +18,6 @@ const DEFAULT_WIDTH = 380;
 const RAIL_WIDTH = 36;
 const MIN_CHAT_REMAINDER = 320;
 const EXTENSION_ORIGIN = new URL(chrome.runtime.getURL('/')).origin;
-const CONVERSATION_PATH_RE = /^\/c\/[0-9a-f-]+/i;
 
 let currentState = null;
 let themeObserver = null;
@@ -24,6 +25,8 @@ let mediaQuery = null;
 let mediaListener = null;
 let panelMessageListener = null;
 let viewportResizeListener = null;
+let dockUrlObserver = null;
+let lastContextConversationId = null;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -118,6 +121,50 @@ function postToFrame(panel, message) {
     frame?.contentWindow?.postMessage(message, EXTENSION_ORIGIN);
   } catch {
     // The frame may be navigating or already gone.
+  }
+}
+
+function postHostContext(panel, force = false) {
+  const conversationId = extractConversationId();
+  if (!force && conversationId === lastContextConversationId) return;
+  lastContextConversationId = conversationId;
+  postToFrame(panel, {
+    type: 'CG_HOST_CONTEXT',
+    payload: { conversationId }
+  });
+}
+
+async function runHostCommand(panel, payload) {
+  const requestId = payload?.requestId;
+  if (!requestId) return;
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.DOCK_HOST_COMMAND,
+      payload: {
+        command: payload.command,
+        conversationId: extractConversationId(),
+        messageId: payload.messageId || null
+      }
+    });
+
+    if (response?.success === false) {
+      throw new Error(response.error || 'Host command failed');
+    }
+
+    postToFrame(panel, {
+      type: 'CG_HOST_RESPONSE',
+      payload: { requestId, success: true, data: response?.data }
+    });
+  } catch (error) {
+    postToFrame(panel, {
+      type: 'CG_HOST_RESPONSE',
+      payload: {
+        requestId,
+        success: false,
+        error: error?.message || String(error)
+      }
+    });
   }
 }
 
@@ -291,15 +338,20 @@ function setupControls(panel) {
 
   const frame = panel.querySelector('iframe');
   panelMessageListener = (event) => {
-    if (event.source !== frame?.contentWindow) return;
+    if (event.source !== frame?.contentWindow || event.origin !== EXTENSION_ORIGIN) return;
 
     const data = event.data;
     if (!data || typeof data !== 'object') return;
 
     if (data.type === 'CG_READY') {
       applyTheme(panel);
+      postHostContext(panel, true);
       postToFrame(panel, { type: 'CG_REQUEST_VIEW_MODE' });
       postToFrame(panel, { type: 'CG_REQUEST_MINIMAP_STATE' });
+    } else if (data.type === 'CG_REQUEST_HOST_CONTEXT') {
+      postHostContext(panel, true);
+    } else if (data.type === 'CG_HOST_COMMAND') {
+      void runHostCommand(panel, data.payload);
     } else if (data.type === 'CG_VIEW_MODE' && data.payload?.mode) {
       setActiveView(panel, String(data.payload.mode));
     } else if (data.type === 'CG_MINIMAP_STATE') {
@@ -356,6 +408,7 @@ async function createPanel() {
   setupResize(panel);
   setupControls(panel);
   startThemeSync(panel);
+  postHostContext(panel, true);
   log('info', 'DockedPanel', 'Conversation graph dock opened');
   return panel;
 }
@@ -371,6 +424,7 @@ export async function openDockPanel(options = {}) {
   }
 
   applyTheme(panel);
+  postHostContext(panel);
   return true;
 }
 
@@ -390,6 +444,7 @@ export function closeDockPanel() {
   panel?.remove();
   document.body?.classList.remove(BODY_CLASS);
   document.documentElement.style.removeProperty('--cg-dock-occupied-width');
+  lastContextConversationId = null;
   log('info', 'DockedPanel', 'Conversation graph dock closed');
 }
 
@@ -407,13 +462,11 @@ export async function toggleDockPanel() {
   return !currentState.collapsed;
 }
 
-function isConversationRoute() {
-  return CONVERSATION_PATH_RE.test(window.location.pathname || '');
-}
-
 async function syncDockToRoute() {
-  if (isConversationRoute()) {
+  const conversationId = extractConversationId();
+  if (conversationId) {
     if (!getPanel()) await openDockPanel();
+    else postHostContext(getPanel());
   } else if (getPanel()) {
     closeDockPanel();
   }
@@ -441,7 +494,7 @@ function setupDockRuntime() {
   }, { capture: true });
 
   void syncDockToRoute();
-  setInterval(() => { void syncDockToRoute(); }, 600);
+  dockUrlObserver = createURLObserver(() => syncDockToRoute(), 600);
 }
 
 if (!globalThis.__chatgptGraphDockInitialized) {
