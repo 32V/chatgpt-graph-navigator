@@ -3,6 +3,7 @@ import { MESSAGE_TYPES } from '../../shared/constants.js';
 import { isTrustedHostEvent, postToHost } from '../host-messaging.js';
 
 const HOST_COMMAND_TIMEOUT_MS = 8000;
+const REFRESH_DEDUPE_MS = 5000;
 
 async function sendRuntimeMessage(message) {
   if (!chrome.runtime?.id) throw new Error('Extension context invalidated');
@@ -27,9 +28,15 @@ export function useConversationData() {
   const [currentNodeId, setCurrentNodeId] = useState(null);
 
   const activeConversationRef = useRef(null);
-  const pendingRefreshes = useRef(new Set());
+  const pendingRefreshes = useRef(new Map());
   const pendingHostRequests = useRef(new Map());
   const requestSequence = useRef(0);
+
+  const clearPendingRefresh = useCallback((conversationId) => {
+    const timer = pendingRefreshes.current.get(conversationId);
+    if (timer) clearTimeout(timer);
+    pendingRefreshes.current.delete(conversationId);
+  }, []);
 
   const requestHostCommand = useCallback((command, payload = {}) => {
     return new Promise((resolve, reject) => {
@@ -50,17 +57,19 @@ export function useConversationData() {
   const triggerContentRefresh = useCallback(async (conversationId) => {
     if (!conversationId || pendingRefreshes.current.has(conversationId)) return;
 
-    pendingRefreshes.current.add(conversationId);
-    const timeout = setTimeout(() => pendingRefreshes.current.delete(conversationId), 5000);
+    const timer = setTimeout(
+      () => pendingRefreshes.current.delete(conversationId),
+      REFRESH_DEDUPE_MS
+    );
+    pendingRefreshes.current.set(conversationId, timer);
 
     try {
       await requestHostCommand('refresh', { conversationId });
     } catch (refreshError) {
-      pendingRefreshes.current.delete(conversationId);
-      clearTimeout(timeout);
+      clearPendingRefresh(conversationId);
       throw refreshError;
     }
-  }, [requestHostCommand]);
+  }, [clearPendingRefresh, requestHostCommand]);
 
   const navigateToMessage = useCallback(async (messageId) => {
     const conversationId = activeConversationRef.current;
@@ -96,7 +105,7 @@ export function useConversationData() {
 
       if (response?.success && response.data) {
         const graphData = transformToGraphData(response.data);
-        pendingRefreshes.current.delete(conversationId);
+        clearPendingRefresh(conversationId);
         setConversationData(graphData);
         setCurrentNodeId(graphData.currentNodeId);
         return;
@@ -112,7 +121,7 @@ export function useConversationData() {
     } finally {
       if (activeConversationRef.current === conversationId) setIsLoading(false);
     }
-  }, [triggerContentRefresh]);
+  }, [clearPendingRefresh, triggerContentRefresh]);
 
   const syncConversation = useCallback(async (conversationId) => {
     const nextId = conversationId || null;
@@ -174,6 +183,8 @@ export function useConversationData() {
         pending.reject(new Error('Panel closed'));
       }
       pendingHostRequests.current.clear();
+      for (const timer of pendingRefreshes.current.values()) clearTimeout(timer);
+      pendingRefreshes.current.clear();
     };
   }, [syncConversation]);
 
@@ -183,7 +194,7 @@ export function useConversationData() {
       const conversationId = message.payload?.conversationId;
       if (!conversationId) return;
 
-      pendingRefreshes.current.delete(conversationId);
+      clearPendingRefresh(conversationId);
       if (conversationId === activeConversationRef.current) {
         void fetchConversation(conversationId, { requestIfMissing: false });
       }
@@ -191,7 +202,7 @@ export function useConversationData() {
 
     chrome.runtime.onMessage.addListener(handleMessage);
     return () => chrome.runtime.onMessage.removeListener(handleMessage);
-  }, [fetchConversation]);
+  }, [clearPendingRefresh, fetchConversation]);
 
   return {
     conversationData,
