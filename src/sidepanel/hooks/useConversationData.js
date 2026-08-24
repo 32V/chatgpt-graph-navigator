@@ -64,7 +64,8 @@ export function useConversationData() {
     pendingRefreshes.current.set(conversationId, timer);
 
     try {
-      await requestHostCommand('refresh', { conversationId });
+      const result = await requestHostCommand('refresh', { conversationId });
+      if (result?.success === false) throw new Error('Canonical refresh failed');
     } catch (refreshError) {
       clearPendingRefresh(conversationId);
       throw refreshError;
