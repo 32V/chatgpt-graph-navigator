@@ -9,8 +9,6 @@ import { clearToken } from '../auth/token-capture.js';
 
 const CHATGPT_URL_RE = /^https:\/\/(?:chatgpt\.com|chat\.openai\.com)\//i;
 const CONVERSATION_ID_RE = /\/c\/([a-f0-9-]+)/i;
-const CONTENT_ERROR_TTL_MS = 10000;
-const recentContentErrors = new Map();
 
 export function setupMessageListener() {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -48,18 +46,9 @@ function handleMessage(message, sender) {
 
 function handleContentError(payload, sender) {
   const tabId = sender?.tab?.id;
-  const message = payload?.message || 'Unknown content-script error';
-  if (tabId) {
-    recentContentErrors.set(tabId, {
-      message,
-      stack: payload?.stack || '',
-      timestamp: Date.now()
-    });
-  }
-
   console.error(
     '[Background] Error from content script:',
-    message,
+    payload?.message || 'Unknown content-script error',
     payload?.stack || '',
     tabId ? `(tab ${tabId})` : ''
   );
@@ -108,20 +97,7 @@ async function handleDockHostCommand(payload, sender) {
     throw new Error(`Unsupported dock command: ${payload?.command || '(none)'}`);
   }
 
-  const result = await sendMessageToTabWithFallback(tabId, message, { retryDelayMs: 500 });
-
-  if (payload?.command === 'refresh') {
-    if (result?.success !== false) {
-      recentContentErrors.delete(tabId);
-    } else if (!result.error) {
-      const recentError = recentContentErrors.get(tabId);
-      if (recentError && Date.now() - recentError.timestamp <= CONTENT_ERROR_TTL_MS) {
-        return { ...result, error: recentError.message };
-      }
-    }
-  }
-
-  return result;
+  return sendMessageToTabWithFallback(tabId, message, { retryDelayMs: 500 });
 }
 
 async function notifyPanel(type, payload) {
