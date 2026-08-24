@@ -21,11 +21,19 @@ function sortByTimeOrId(a, b) {
   return idA.localeCompare(idB);
 }
 
-function sortTree(questions) {
+function sortTree(questions, seenQuestions = new Set(), seenAnswers = new Set()) {
   questions.sort(sortByTimeOrId);
+
   for (const question of questions) {
+    if (!question?.userId || seenQuestions.has(question.userId)) continue;
+    seenQuestions.add(question.userId);
     question.answers.sort(sortByTimeOrId);
-    for (const answer of question.answers) sortTree(answer.nextQuestions);
+
+    for (const answer of question.answers) {
+      if (!answer?.assistantId || seenAnswers.has(answer.assistantId)) continue;
+      seenAnswers.add(answer.assistantId);
+      sortTree(answer.nextQuestions, seenQuestions, seenAnswers);
+    }
   }
 }
 
@@ -42,16 +50,19 @@ function emptyTree() {
 
 function defaultSelectedPath(root) {
   const selectedPath = new Set();
+  const visited = new Set();
   let activeLeafId = null;
   let question = root.questions.at(-1) || null;
 
-  while (question) {
+  while (question?.userId && !visited.has(`q:${question.userId}`)) {
+    visited.add(`q:${question.userId}`);
     selectedPath.add(question.userId);
     activeLeafId = question.userId;
 
     const answer = question.answers.at(-1) || null;
-    if (!answer) break;
+    if (!answer?.assistantId || visited.has(`a:${answer.assistantId}`)) break;
 
+    visited.add(`a:${answer.assistantId}`);
     selectedPath.add(answer.assistantId);
     activeLeafId = answer.assistantId;
     question = answer.nextQuestions.at(-1) || null;
@@ -77,16 +88,24 @@ export function buildQATree(nodes, edges = []) {
     if (edge?.target && edge?.source) parentMap.set(edge.target, edge.source);
   }
 
+  const ancestorCache = new Map();
   const findAncestorByRole = (nodeId, role) => {
+    const cacheKey = `${role}:${nodeId}`;
+    if (ancestorCache.has(cacheKey)) return ancestorCache.get(cacheKey);
+
     let currentId = parentMap.get(nodeId);
     const visited = new Set();
-
     while (currentId && !visited.has(currentId)) {
       visited.add(currentId);
       const node = rawNodeMap.get(currentId);
-      if (node?.role === role) return currentId;
+      if (node?.role === role) {
+        ancestorCache.set(cacheKey, currentId);
+        return currentId;
+      }
       currentId = parentMap.get(currentId);
     }
+
+    ancestorCache.set(cacheKey, null);
     return null;
   };
 
@@ -169,4 +188,25 @@ export function updateSelectedPath(tree, activeNodeId) {
     selectedPath: pathToRoot(activeNodeId, tree.parentMap),
     activeLeafId: activeNodeId
   };
+}
+
+/**
+ * Stable semantic signature for the rendered QA topology. Object identity and
+ * message text are intentionally ignored, while root/sibling order is kept.
+ */
+export function getQATreeStructureKey(tree) {
+  if (!tree) return '';
+
+  const parts = [
+    `root:${(tree.root?.questions || []).map(question => question.userId).join(',')}`
+  ];
+
+  const questions = Array.from(tree.qNodeMap?.values?.() || [])
+    .map(question => `q:${question.userId}>${(question.answers || []).map(answer => answer.assistantId).join(',')}`)
+    .sort();
+  const answers = Array.from(tree.aNodeMap?.values?.() || [])
+    .map(answer => `a:${answer.assistantId}>${(answer.nextQuestions || []).map(question => question.userId).join(',')}`)
+    .sort();
+
+  return parts.concat(questions, answers).join('|');
 }
